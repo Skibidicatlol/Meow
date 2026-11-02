@@ -58,8 +58,9 @@ S.CONFIG = {
 
     SCAN_INTERVAL = 2,
 
-    MINIMUM_ACCESSORY_SCALE = 0.25,
-    MAXIMUM_ACCESSORY_SCALE = 4,
+    -- ALTERADO: limites bem mais amplos para acessórios
+    MINIMUM_ACCESSORY_SCALE = 0.01,
+    MAXIMUM_ACCESSORY_SCALE = 100,
 }
 
 S.CurrentMode = S.CONFIG.MODE
@@ -730,6 +731,11 @@ S.UpdatePartSizes = function(state)
                 currentSize
             )
 
+            -- DEBUG (descomente só se o corpo também não crescer):
+            -- if target.Name == "Torso" then
+            --     warn("Torso", currentSize, ratio)
+            -- end
+
             local newSize = S.ScaleVector(
                 pair.OriginalTargetSize,
                 ratio
@@ -813,7 +819,18 @@ S.CaptureAccessories = function(state)
 
                     Attachments = {},
                     Welds = {},
+                    Meshes = {},
                 }
+
+                -- NOVO: SpecialMesh (FileMesh) ignora o Size do Handle,
+                -- então a escala visual precisa ser aplicada no Mesh.Scale.
+                for _, child in ipairs(handle:GetChildren()) do
+                    if child:IsA("SpecialMesh")
+                        and child.MeshType == Enum.MeshType.FileMesh then
+
+                        data.Meshes[child] = child.Scale
+                    end
+                end
 
                 for _, object in ipairs(
                     accessory:GetDescendants()
@@ -877,6 +894,16 @@ S.UpdateAccessories = function(state)
 
             if (handle.Size - newHandleSize).Magnitude > 0.001 then
                 handle.Size = newHandleSize
+            end
+
+            -- NOVO: escala visual dos SpecialMesh (FileMesh).
+            for mesh, original in pairs(data.Meshes or {}) do
+                if mesh and mesh.Parent then
+                    mesh.Scale = S.ScaleVector(
+                        original,
+                        handleRatio
+                    )
+                end
             end
 
             for attachment, info in pairs(data.Attachments) do

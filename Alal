@@ -1,3 +1,4 @@
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE A1/6 — BASE E CONFIGURAÇÕES
@@ -1351,40 +1352,39 @@ S.Connect(
 print("[R6System] Parte B carregada.")
 --========================================================--
 -- R6 AVATAR + NPCs
--- PARTE C/5 — JOGADOR E MODOS
+-- PARTE C/6 — JOGADOR, MODOS E ANIMAÇÕES
 --========================================================--
 
-local S = ((getgenv and getgenv()) or _G).R6System
-assert(S, "Execute a Parte A antes da Parte C.")
-
 --========================================================--
--- GARANTIR ESTRUTURAS
---========================================================--
-
-S.AnimationTracks = S.AnimationTracks or {}
-S.CurrentAnimation = nil
-
---========================================================--
--- OCULTAR OBJETOS ORIGINAIS DO JOGADOR
+-- OCULTAÇÃO DO PERSONAGEM ORIGINAL
 --========================================================--
 
 S.EnforceLocalObjectHidden = function(object)
-    if not object or not object.Parent then
+    if not object then
         return
     end
 
     if object:IsA("BasePart") then
+
         object.Transparency = 1
         object.LocalTransparencyModifier = 1
         object.CastShadow = false
 
-    elseif object:IsA("Decal") or object:IsA("Texture") then
+    elseif object:IsA("Decal")
+        or object:IsA("Texture") then
+
         object.Transparency = 1
 
     elseif object:IsA("ParticleEmitter")
         or object:IsA("Trail")
         or object:IsA("Beam")
-        or object:IsA("BillboardGui")
+        or object:IsA("Fire")
+        or object:IsA("Smoke")
+        or object:IsA("Sparkles") then
+
+        object.Enabled = false
+
+    elseif object:IsA("BillboardGui")
         or object:IsA("SurfaceGui")
         or object:IsA("Highlight") then
 
@@ -1402,6 +1402,7 @@ S.CaptureLocalTransparency = function(object)
     end
 
     if object:GetAttribute("R6OriginalTransparency") == nil then
+
         if object:IsA("BasePart")
             or object:IsA("Decal")
             or object:IsA("Texture") then
@@ -1413,55 +1414,35 @@ S.CaptureLocalTransparency = function(object)
         end
     end
 
-    if object:IsA("BasePart") then
-        if object:GetAttribute("R6OriginalCastShadow") == nil then
-            object:SetAttribute(
-                "R6OriginalCastShadow",
-                object.CastShadow
-            )
-        end
+    if object:IsA("BasePart")
+        and object:GetAttribute("R6OriginalCastShadow") == nil then
+
+        object:SetAttribute(
+            "R6OriginalCastShadow",
+            object.CastShadow
+        )
     end
 end
 
 --========================================================--
--- MONITORAR OBJETOS ORIGINAIS
+-- MONITORAMENTO DOS OBJETOS ORIGINAIS
 --========================================================--
 
 S.MonitorLocalObject = function(state, object)
-    if not state or state.Destroyed or not object then
+    if not state or not object then
         return
     end
 
+    state.MonitoredObjects = state.MonitoredObjects or {}
+
+    if state.MonitoredObjects[object] then
+        return
+    end
+
+    state.MonitoredObjects[object] = true
+
     S.CaptureLocalTransparency(object)
     S.EnforceLocalObjectHidden(object)
-
-    local function ConnectProperty(property)
-        local connection = object:GetPropertyChangedSignal(property):Connect(function()
-            if not state.Destroyed then
-                S.EnforceLocalObjectHidden(object)
-            end
-        end)
-
-        table.insert(state.Connections, connection)
-    end
-
-    if object:IsA("BasePart") then
-        ConnectProperty("Transparency")
-        ConnectProperty("LocalTransparencyModifier")
-        ConnectProperty("CastShadow")
-
-    elseif object:IsA("Decal") or object:IsA("Texture") then
-        ConnectProperty("Transparency")
-
-    elseif object:IsA("ParticleEmitter")
-        or object:IsA("Trail")
-        or object:IsA("Beam")
-        or object:IsA("BillboardGui")
-        or object:IsA("SurfaceGui")
-        or object:IsA("Highlight") then
-
-        ConnectProperty("Enabled")
-    end
 end
 
 --========================================================--
@@ -1469,37 +1450,44 @@ end
 --========================================================--
 
 S.HideLocalOriginal = function(state)
-    if not state or not state.Original then
+    if not state or not state.Source then
         return
     end
 
-    for _, object in ipairs(state.Original:GetDescendants()) do
+    state.MonitoredObjects = {}
+
+    for _, object in ipairs(state.Source:GetDescendants()) do
         S.MonitorLocalObject(state, object)
     end
 
-    -- Monitorar objetos adicionados posteriormente.
-    if not state.DescendantAddedConnection then
-        state.DescendantAddedConnection =
-            state.Original.DescendantAdded:Connect(function(object)
-                if not state.Destroyed then
-                    S.MonitorLocalObject(state, object)
-                end
-            end)
+    S.Connect(
+        state.Connections,
 
-        table.insert(
-            state.Connections,
-            state.DescendantAddedConnection
-        )
-    end
+        state.Source.DescendantAdded:Connect(function(object)
+
+            if not state.Active then
+                return
+            end
+
+            S.MonitorLocalObject(state, object)
+        end)
+    )
 end
 
+--========================================================--
+-- GARANTIR QUE O ORIGINAL CONTINUE OCULTO
+--========================================================--
+
 S.EnforceLocalOriginalHidden = function(state)
-    if not state or state.Destroyed or not state.Original then
+    if not state or not state.Source then
         return
     end
 
-    for _, object in ipairs(state.Original:GetDescendants()) do
-        S.EnforceLocalObjectHidden(object)
+    for object in pairs(state.MonitoredObjects or {}) do
+
+        if object and object.Parent then
+            S.EnforceLocalObjectHidden(object)
+        end
     end
 end
 
@@ -1508,117 +1496,162 @@ end
 --========================================================--
 
 S.RestoreLocalOriginal = function(state)
-    if not state or not state.Original then
+    if not state then
         return
     end
 
-    for _, object in ipairs(state.Original:GetDescendants()) do
-        if object:IsA("BasePart") then
-            local transparency =
-                object:GetAttribute("R6OriginalTransparency")
+    for object in pairs(state.MonitoredObjects or {}) do
 
-            local castShadow =
-                object:GetAttribute("R6OriginalCastShadow")
+        if object and object.Parent then
 
-            object.LocalTransparencyModifier = 0
-            object.Transparency = transparency ~= nil and transparency or 0
-            object.CastShadow = castShadow ~= nil and castShadow or true
+            if object:IsA("BasePart")
+                or object:IsA("Decal")
+                or object:IsA("Texture") then
 
-        elseif object:IsA("Decal") or object:IsA("Texture") then
-            local transparency =
-                object:GetAttribute("R6OriginalTransparency")
+                local originalTransparency =
+                    object:GetAttribute("R6OriginalTransparency")
 
-            object.Transparency =
-                transparency ~= nil and transparency or 0
+                if originalTransparency ~= nil then
+                    object.Transparency = originalTransparency
+                end
 
-        elseif object:IsA("ParticleEmitter")
-            or object:IsA("Trail")
-            or object:IsA("Beam")
-            or object:IsA("BillboardGui")
-            or object:IsA("SurfaceGui")
-            or object:IsA("Highlight") then
+                if object:IsA("BasePart") then
 
-            object.Enabled = true
+                    local originalShadow =
+                        object:GetAttribute("R6OriginalCastShadow")
+
+                    if originalShadow ~= nil then
+                        object.CastShadow = originalShadow
+                    end
+
+                    object.LocalTransparencyModifier = 0
+                end
+
+            elseif object:IsA("ParticleEmitter")
+                or object:IsA("Trail")
+                or object:IsA("Beam")
+                or object:IsA("Fire")
+                or object:IsA("Smoke")
+                or object:IsA("Sparkles") then
+
+                object.Enabled = true
+
+            elseif object:IsA("BillboardGui")
+                or object:IsA("SurfaceGui")
+                or object:IsA("Highlight") then
+
+                object.Enabled = true
+            end
         end
     end
+
+    state.MonitoredObjects = {}
 end
 
 --========================================================--
--- ATUALIZAÇÃO DE TAMANHO
+-- ATUALIZAR TAMANHOS DO R6 LOCAL
 --========================================================--
 
-S.UpdateLocalSizes = function()
-    local state = S.LocalState
-
-    if not state
-        or state.Destroyed
-        or not state.Active
-        or not state.Rig
-        or not state.Original then
-
+S.UpdateLocalSizes = function(state)
+    if not state or not state.Active then
         return
     end
 
-    if S.UpdatePartSizes then
-        S.UpdatePartSizes(state)
-    end
-
-    if S.UpdateAccessories then
-        S.UpdateAccessories(state)
-    end
+    S.UpdatePartSizes(state)
+    S.UpdateAccessories(state)
 
     S.EnforceLocalOriginalHidden(state)
 end
 
+--========================================================--
+-- MONITORAR ALTERAÇÕES DE TAMANHO
+--========================================================--
+
 S.MonitorLocalSizeChanges = function(state)
-    if not state or not state.Original then
+    if not state or not state.Source then
         return
     end
 
-    for _, object in ipairs(state.Original:GetDescendants()) do
-        if object:IsA("BasePart") then
-            local connection =
+    state.SizeMonitored = state.SizeMonitored or {}
+
+    for _, object in ipairs(state.Source:GetDescendants()) do
+
+        if object:IsA("BasePart")
+            and not state.SizeMonitored[object] then
+
+            state.SizeMonitored[object] = true
+
+            S.Connect(
+                state.Connections,
+
                 object:GetPropertyChangedSignal("Size"):Connect(function()
 
-                    if not state.Destroyed and S.LocalState == state then
-                        S.UpdateLocalSizes()
+                    if not state.Active then
+                        return
                     end
-                end)
 
-            table.insert(state.Connections, connection)
+                    S.UpdateLocalSizes(state)
+                end)
+            )
         end
     end
+
+    S.Connect(
+        state.Connections,
+
+        state.Source.DescendantAdded:Connect(function(object)
+
+            if not state.Active then
+                return
+            end
+
+            if object:IsA("BasePart")
+                and not state.SizeMonitored[object] then
+
+                state.SizeMonitored[object] = true
+
+                S.Connect(
+                    state.Connections,
+
+                    object:GetPropertyChangedSignal("Size"):Connect(function()
+
+                        if state.Active then
+                            S.UpdateLocalSizes(state)
+                        end
+                    end)
+                )
+            end
+        end)
+    )
 end
 
 --========================================================--
--- ANIMAÇÕES CLÁSSICAS
+-- ANIMAÇÕES CLASSIC
 --========================================================--
 
 S.StopClassicAnimations = function()
-    S.AnimationTracks = S.AnimationTracks or {}
+    for name, track in pairs(S.AnimationTracks or {}) do
 
-    for _, track in pairs(S.AnimationTracks) do
-        pcall(function()
-            track:Stop(0.15)
-            track:Destroy()
-        end)
+        if track then
+            pcall(function()
+                track:Stop(0.15)
+                track:Destroy()
+            end)
+        end
+
+        S.AnimationTracks[name] = nil
     end
 
-    table.clear(S.AnimationTracks)
-
+    S.AnimationController = nil
     S.CurrentAnimation = nil
 end
 
-S.LoadClassicAnimations = function()
+--========================================================--
+-- CARREGAR ANIMAÇÕES
+--========================================================--
+
+S.LoadClassicAnimations = function(humanoid)
     S.StopClassicAnimations()
-
-    local rig = S.LocalR6
-
-    if not rig or not rig.Parent then
-        return false
-    end
-
-    local humanoid = rig:FindFirstChildOfClass("Humanoid")
 
     if not humanoid then
         return false
@@ -1633,16 +1666,10 @@ S.LoadClassicAnimations = function()
 
     S.AnimationController = animator
 
-    local animations = {
-        Idle = "rbxassetid://180435571",
-        Walk = "rbxassetid://180426354",
-        Run = "rbxassetid://180426354",
-        Jump = "rbxassetid://125750702",
-        Fall = "rbxassetid://180436148",
-    }
+    for name, animationId in pairs(S.CONFIG.ANIMATIONS) do
 
-    for name, animationId in pairs(animations) do
         local animation = Instance.new("Animation")
+        animation.Name = "R6_" .. name
         animation.AnimationId = animationId
 
         local success, track = pcall(function()
@@ -1652,133 +1679,218 @@ S.LoadClassicAnimations = function()
         animation:Destroy()
 
         if success and track then
+
             if name == "Idle" then
                 track.Priority = Enum.AnimationPriority.Idle
 
-            elseif name == "Jump" or name == "Fall" then
-                track.Priority = Enum.AnimationPriority.Action
+            elseif name == "Walk"
+                or name == "Run" then
+
+                track.Priority = Enum.AnimationPriority.Movement
 
             else
-                track.Priority = Enum.AnimationPriority.Movement
+                track.Priority = Enum.AnimationPriority.Action
             end
+
+            track.Looped = (
+                name == "Idle"
+                or name == "Walk"
+                or name == "Run"
+                or name == "Climb"
+            )
 
             S.AnimationTracks[name] = track
         end
     end
 
-    return next(S.AnimationTracks) ~= nil
+    return true
 end
 
-S.PlayClassicAnimation = function(name, fadeTime)
-    local track = S.AnimationTracks and S.AnimationTracks[name]
+--========================================================--
+-- PARAR ANIMAÇÃO ATUAL
+--========================================================--
+
+S.StopCurrentClassicAnimation = function()
+    if not S.CurrentAnimation then
+        return
+    end
+
+    local track = S.AnimationTracks[S.CurrentAnimation]
+
+    if track then
+        pcall(function()
+            track:Stop(0.15)
+        end)
+    end
+
+    S.CurrentAnimation = nil
+end
+
+--========================================================--
+-- TOCAR ANIMAÇÃO
+--========================================================--
+
+S.PlayClassicAnimation = function(name, speed)
+    if not name then
+        return
+    end
+
+    local track = S.AnimationTracks[name]
 
     if not track then
         return
     end
 
     if S.CurrentAnimation == name and track.IsPlaying then
+
+        if speed then
+            pcall(function()
+                track:AdjustSpeed(speed)
+            end)
+        end
+
         return
     end
 
-    for otherName, otherTrack in pairs(S.AnimationTracks) do
-        if otherName ~= name and otherTrack.IsPlaying then
-            otherTrack:Stop(fadeTime or 0.15)
-        end
-    end
+    S.StopCurrentClassicAnimation()
 
     S.CurrentAnimation = name
 
-    if not track.IsPlaying then
-        track:Play(fadeTime or 0.15)
-    end
-end
+    pcall(function()
+        track:Play(0.15)
 
-S.UpdateClassicAnimation = function()
-    if S.CurrentMode ~= "Classic" then
-        return
-    end
-
-    local humanoid = S.LocalHumanoid
-
-    if not humanoid then
-        return
-    end
-
-    local humanoidState = humanoid:GetState()
-    local moving = humanoid.MoveDirection.Magnitude > 0.05
-
-    if humanoidState == Enum.HumanoidStateType.Jumping then
-        S.PlayClassicAnimation("Jump")
-
-    elseif humanoidState == Enum.HumanoidStateType.Freefall then
-        S.PlayClassicAnimation("Fall")
-
-    elseif moving then
-        if humanoid.WalkSpeed > 16 then
-            S.PlayClassicAnimation("Run")
-        else
-            S.PlayClassicAnimation("Walk")
+        if speed then
+            track:AdjustSpeed(speed)
         end
-
-    else
-        S.PlayClassicAnimation("Idle")
-    end
+    end)
 end
 
 --========================================================--
--- PREPARAÇÃO DOS RIGS
+-- ATUALIZAR ANIMAÇÃO CLASSIC
+--========================================================--
+
+S.UpdateClassicAnimation = function()
+    local state = S.LocalState
+
+    if not state
+        or not state.Active
+        or state.Mode ~= "Classic" then
+        return
+    end
+
+    local sourceHumanoid = state.SourceHumanoid
+    local rigHumanoid = state.RigHumanoid
+
+    if not sourceHumanoid or not rigHumanoid then
+        return
+    end
+
+    if sourceHumanoid.Health <= 0 then
+        S.PlayClassicAnimation("Idle")
+        return
+    end
+
+    local sourceRoot = state.SourceRoot
+
+    if not sourceRoot or not sourceRoot.Parent then
+        return
+    end
+
+    local velocity = sourceRoot.AssemblyLinearVelocity
+    local horizontalSpeed = Vector3.new(
+        velocity.X,
+        0,
+        velocity.Z
+    ).Magnitude
+
+    local stateType = sourceHumanoid:GetState()
+
+    local animationName = "Idle"
+    local animationSpeed = 1
+
+    if stateType == Enum.HumanoidStateType.Jumping then
+
+        animationName = "Jump"
+
+    elseif stateType == Enum.HumanoidStateType.Freefall then
+
+        animationName = "Fall"
+
+    elseif stateType == Enum.HumanoidStateType.Climbing then
+
+        animationName = "Climb"
+
+    elseif horizontalSpeed > 0.5 then
+
+        animationName = "Walk"
+
+        animationSpeed = math.max(
+            S.CONFIG.MIN_ANIMATION_SPEED,
+
+            horizontalSpeed /
+            math.max(S.CONFIG.REFERENCE_SPEED, 0.001)
+        )
+
+        animationSpeed *=
+            S.CONFIG.ANIMATION_SPEED_MULTIPLIER
+    end
+
+    S.PlayClassicAnimation(
+        animationName,
+        animationSpeed
+    )
+end
+
+--========================================================--
+-- PREPARAR MODO CLASSIC
 --========================================================--
 
 S.PrepareClassicRig = function(state)
-    if not state or not state.Rig or not state.Original then
+    if not state
+        or not state.Source
+        or not state.Rig then
         return false
     end
 
-    state.Source = state.Original
+    state.Active = false
     state.Mode = "Classic"
 
+    state.PartPairs = {}
+    state.AccessoryData = {}
+
+    -- Captura os acessórios.
     S.CaptureAccessories(state)
 
-    -- O modo Classic preserva os Motor6D originais
-    -- criados pela função CreateR6 da Parte A.
-    -- Não executar BuildIndividualWelds aqui.
+    -- IMPORTANTE:
+    -- Registra os pares sem destruir os Motor6D.
+    -- Não cria WeldConstraint neste modo.
+    S.BuildClassicPartPairs(state)
 
-    if not state.Rig:FindFirstChild("HumanoidRootPart") then
+    if not state.RigRoot then
+        state.RigRoot =
+            state.Rig:FindFirstChild("HumanoidRootPart")
+    end
+
+    if not state.SourceRoot
+        or not state.SourceRoot.Parent
+        or not state.RigRoot then
+
         return false
     end
+
+    -- O root do R6 fica ancorado para acompanhar
+    -- o personagem sem depender da física.
+    state.RigRoot.Anchored = true
 
     state.Active = true
 
-    S.UpdatePartSizes(state)
-    S.UpdateAccessories(state)
+    -- Posiciona inicialmente o R6.
+    state.Rig:PivotTo(
+        state.SourceRoot.CFrame
+        * CFrame.new(0, S.CONFIG.HEIGHT_OFFSET, 0)
+    )
 
-    S.HideLocalOriginal(state)
-    S.MonitorLocalSizeChanges(state)
-
-    return true
-end
-
-S.PrepareAnimatedRig = function(state)
-    if not state or not state.Rig or not state.Original then
-        return false
-    end
-
-    state.Source = state.Original
-    state.Mode = "Animated"
-
-    S.CaptureAccessories(state)
-
-    -- Animated utiliza os welds individuais.
-    S.BuildIndividualWelds(state)
-
-    if not state.PartPairs or not next(state.PartPairs) then
-        return false
-    end
-
-    state.Active = true
-
-    S.UpdatePartSizes(state)
-    S.UpdateAccessories(state)
+    S.UpdateLocalSizes(state)
 
     S.HideLocalOriginal(state)
     S.MonitorLocalSizeChanges(state)
@@ -1787,7 +1899,52 @@ S.PrepareAnimatedRig = function(state)
 end
 
 --========================================================--
--- LIMPEZA DAS CONEXÕES LOCAIS
+-- PREPARAR MODO ANIMATED
+--========================================================--
+
+S.PrepareAnimatedRig = function(state)
+    if not state
+        or not state.Source
+        or not state.Rig then
+        return false
+    end
+
+    state.Active = false
+    state.Mode = "Animated"
+
+    state.PartPairs = {}
+    state.AccessoryData = {}
+
+    S.CaptureAccessories(state)
+
+    -- Animated utiliza Welds individuais.
+    S.BuildIndividualWelds(state)
+
+    local count = 0
+
+    for _, pair in pairs(state.PartPairs) do
+
+        if pair.Source and pair.Target then
+            count += 1
+        end
+    end
+
+    if count == 0 then
+        return false
+    end
+
+    state.Active = true
+
+    S.UpdateLocalSizes(state)
+
+    S.HideLocalOriginal(state)
+    S.MonitorLocalSizeChanges(state)
+
+    return true
+end
+
+--========================================================--
+-- DESCONECTAR ESTADO LOCAL
 --========================================================--
 
 S.DisconnectLocalState = function(state)
@@ -1795,158 +1952,234 @@ S.DisconnectLocalState = function(state)
         return
     end
 
-    for _, connection in ipairs(state.Connections or {}) do
-        pcall(function()
-            connection:Disconnect()
-        end)
-    end
+    state.Active = false
 
-    table.clear(state.Connections or {})
+    S.DisconnectAll(state.Connections)
+
+    state.MonitoredObjects = {}
+    state.SizeMonitored = {}
 end
 
 --========================================================--
--- LIMPEZA DO JOGADOR
+-- LIMPEZA DO PERSONAGEM LOCAL
 --========================================================--
 
 S.CleanupLocal = function()
     local state = S.LocalState
 
     if state then
-        state.Destroyed = true
-        state.Active = false
 
         S.DisconnectLocalState(state)
 
+        S.RestoreLocalOriginal(state)
+
         if state.Rig then
+
             S.GeneratedRigs[state.Rig] = nil
 
-            if state.Rig.Parent then
+            pcall(function()
                 state.Rig:Destroy()
-            end
+            end)
         end
-
-        S.RestoreLocalOriginal(state)
     end
 
     S.StopClassicAnimations()
 
     if S.PlayerUpdateConnection then
-        S.PlayerUpdateConnection:Disconnect()
+
+        pcall(function()
+            S.PlayerUpdateConnection:Disconnect()
+        end)
+
         S.PlayerUpdateConnection = nil
     end
 
-    S.LocalState = nil
+    S.LocalR6 = nil
+    S.LocalR6Humanoid = nil
+
     S.LocalCharacter = nil
     S.LocalHumanoid = nil
     S.LocalRoot = nil
-    S.LocalR6 = nil
-    S.LocalR6Humanoid = nil
-    S.AnimationController = nil
+
+    S.LocalState = {
+        Source = nil,
+        Rig = nil,
+        Active = false,
+
+        Connections = {},
+        PartPairs = {},
+
+        AccessoryData = {},
+        OriginalVisibility = {},
+        MonitoredObjects = {},
+        SizeMonitored = {},
+    }
 end
 
 --========================================================--
--- CONFIGURAÇÃO DO JOGADOR
+-- CONFIGURAR PERSONAGEM LOCAL
 --========================================================--
 
 S.SetupLocal = function(character)
     if not S.RUNNING or not character then
-        return
+        return false
     end
 
+    -- Limpa a configuração anterior.
     S.CleanupLocal()
 
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local root = character:FindFirstChild("HumanoidRootPart")
+    local humanoid =
+        character:FindFirstChildOfClass("Humanoid")
+
+    local root =
+        character:FindFirstChild("HumanoidRootPart")
 
     if not humanoid or not root then
-        return
+        return false
     end
+
+    -- Cria o R6.
+    local rig, rigHumanoid, rigRoot =
+        S.CreateR6(character.Name .. "_R6")
+
+    if not rig then
+        return false
+    end
+
+    local state = {
+        Source = character,
+
+        SourceHumanoid = humanoid,
+        SourceRoot = root,
+
+        Rig = rig,
+        RigHumanoid = rigHumanoid,
+        RigRoot = rigRoot,
+
+        Active = false,
+        Mode = S.CurrentMode,
+
+        Connections = {},
+        PartPairs = {},
+
+        AccessoryData = {},
+        OriginalVisibility = {},
+        MonitoredObjects = {},
+        SizeMonitored = {},
+    }
+
+    S.LocalState = state
 
     S.LocalCharacter = character
     S.LocalHumanoid = humanoid
     S.LocalRoot = root
 
-    -- O R6 usa a aparência fixa definida na Parte A.
-    -- Não copia a aparência do jogador.
-
-    local rig = S.CreateR6(
-        "R6_Player_" .. S.HttpService:GenerateGUID(false)
-    )
-
-    if not rig then
-        return
-    end
-
-    local state = {
-        NPC = character,
-        Original = character,
-        Source = character,
-        Rig = rig,
-
-        Connections = {},
-
-        Destroyed = false,
-        Active = false,
-
-        AccessoryData = {},
-        PartData = {},
-        PartPairs = {},
-    }
-
-    S.LocalState = state
     S.LocalR6 = rig
-    S.LocalR6Humanoid = rig:FindFirstChildOfClass("Humanoid")
+    S.LocalR6Humanoid = rigHumanoid
+
+    --====================================================--
+    -- PREPARAÇÃO DO MODO
+    --====================================================--
 
     local prepared = false
 
     if S.CurrentMode == "Classic" then
+
         prepared = S.PrepareClassicRig(state)
+
+        if prepared then
+            S.LoadClassicAnimations(rigHumanoid)
+        end
+
     else
+
         prepared = S.PrepareAnimatedRig(state)
     end
 
     if not prepared then
+
+        warn(
+            "[R6System] Não foi possível preparar o personagem local."
+        )
+
         S.CleanupLocal()
-        return
+
+        return false
     end
 
-    if S.CurrentMode == "Classic" then
-        S.LoadClassicAnimations()
-    end
+    --====================================================--
+    -- ATUALIZAÇÃO CONTÍNUA
+    --====================================================--
 
-    S.PlayerUpdateConnection = S.RunService.Heartbeat:Connect(function()
-        if not S.RUNNING
-            or S.LocalState ~= state
-            or state.Destroyed then
+    S.PlayerUpdateConnection =
+        S.RunService.Heartbeat:Connect(function()
 
-            return
-        end
-
-        S.UpdateLocalSizes()
-        S.EnforceLocalOriginalHidden(state)
-
-        if S.CurrentMode == "Classic" then
-            S.UpdateClassicAnimation()
-        end
-    end)
-
-    table.insert(
-        state.Connections,
-
-        character.AncestryChanged:Connect(function()
-            if state.Destroyed then
+            if not S.RUNNING
+                or not state.Active then
                 return
             end
 
-            if not character.Parent then
-                S.CleanupLocal()
+            if not character.Parent
+                or not state.Rig
+                or not state.Rig.Parent then
+                return
+            end
+
+            if S.CurrentMode == "Classic" then
+
+                -- Acompanha o personagem original.
+                -- O PivotTo movimenta o rig inteiro,
+                -- preservando os Motor6D internos.
+                if state.SourceRoot
+                    and state.SourceRoot.Parent
+                    and state.RigRoot
+                    and state.RigRoot.Parent then
+
+                    local targetCFrame =
+                        state.SourceRoot.CFrame
+                        * CFrame.new(
+                            0,
+                            S.CONFIG.HEIGHT_OFFSET,
+                            0
+                        )
+
+                    state.Rig:PivotTo(targetCFrame)
+                end
+
+                S.UpdateLocalSizes(state)
+                S.UpdateClassicAnimation()
+
+            elseif S.CurrentMode == "Animated" then
+
+                S.UpdateLocalSizes(state)
+            end
+
+            S.EnforceR6VisualProperties(state.Rig)
+        end)
+
+    --====================================================--
+    -- REMOÇÃO DO PERSONAGEM
+    --====================================================--
+
+    S.Connect(
+        state.Connections,
+
+        character.AncestryChanged:Connect(function(_, parent)
+
+            if not parent then
+
+                if S.LocalState == state then
+                    S.CleanupLocal()
+                end
             end
         end)
     )
+
+    return true
 end
 
 --========================================================--
--- TROCA DE MODO
+-- ALTERAR MODO
 --========================================================--
 
 S.ChangeMode = function(mode)
@@ -1963,6 +2196,7 @@ S.ChangeMode = function(mode)
     end
 
     S.CurrentMode = mode
+    S.CONFIG.MODE = mode
 
     local character = S.LocalPlayer.Character
 
@@ -1974,48 +2208,46 @@ S.ChangeMode = function(mode)
         S.RefreshModeButtons()
     end
 
-    if S.ModeLabel then
-        S.ModeLabel.Text = "Modo: " .. mode
-    end
+    print("[R6System] Modo alterado para:", mode)
 end
 
-print("[R6System] Parte C carregada: jogador e modos.")
+print("[R6System] Parte C carregada.")
+--========================================================--
+-- R6 AVATAR + NPCs
+-- PARTE D/6 — INTERFACE E MONITORAMENTO
+--========================================================--
 
---//====================================================
---// R6 AVATAR + NPCs
---// PARTE D/5 — INTERFACE E MONITORAMENTO
---//====================================================
+do
 
-local S = ((getgenv and getgenv()) or _G).R6System
+--========================================================--
+-- SERVIÇOS E REFERÊNCIAS
+--========================================================--
 
-assert(S, "Execute a Parte A antes da Parte D.")
+local playerGui = S.LocalPlayer:WaitForChild("PlayerGui")
 
---//====================================================
---// CONFIGURAÇÃO DA INTERFACE
---//====================================================
+-- Remove interface antiga.
+local oldUI = playerGui:FindFirstChild("R6SystemUI")
 
-S.PlayerGui = S.LocalPlayer:WaitForChild("PlayerGui")
-
--- Remover interface antiga
-local oldGui = S.PlayerGui:FindFirstChild("R6SystemUI")
-
-if oldGui then
-    oldGui:Destroy()
+if oldUI then
+    oldUI:Destroy()
 end
 
-S.ScreenGui = Instance.new("ScreenGui")
-S.ScreenGui.Name = "R6SystemUI"
-S.ScreenGui.ResetOnSpawn = false
-S.ScreenGui.IgnoreGuiInset = true
-S.ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-S.ScreenGui.DisplayOrder = 999
-S.ScreenGui.Parent = S.PlayerGui
+--========================================================--
+-- SCREEN GUI
+--========================================================--
 
-S.UI = S.UI or {}
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "R6SystemUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
 
---//====================================================
---// FUNÇÕES VISUAIS
---//====================================================
+S.UI = screenGui
+
+--========================================================--
+-- FUNÇÕES VISUAIS
+--========================================================--
 
 S.CreateCorner = function(parent, radius)
     local corner = Instance.new("UICorner")
@@ -2025,124 +2257,281 @@ S.CreateCorner = function(parent, radius)
     return corner
 end
 
-S.CreateStroke = function(parent, color, thickness)
+S.CreateStroke = function(parent, color, thickness, transparency)
     local stroke = Instance.new("UIStroke")
-    stroke.Color = color or Color3.fromRGB(65, 75, 100)
+
+    stroke.Color = color or Color3.fromRGB(65, 95, 150)
     stroke.Thickness = thickness or 1
+    stroke.Transparency = transparency or 0
+
     stroke.Parent = parent
 
     return stroke
 end
 
-S.CreateLabel = function(parent, name, text, size, position, textSize)
+S.CreateLabel = function(parent, text, size, position, textSize)
     local label = Instance.new("TextLabel")
 
-    label.Name = name
-    label.Text = text
+    label.BackgroundTransparency = 1
+    label.BorderSizePixel = 0
+
     label.Size = size
     label.Position = position
-    label.BackgroundTransparency = 1
-    label.TextColor3 = Color3.fromRGB(235, 240, 255)
+
     label.Font = Enum.Font.Gotham
+    label.Text = text or ""
     label.TextSize = textSize or 13
+
+    label.TextColor3 = Color3.fromRGB(230, 235, 245)
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.TextYAlignment = Enum.TextYAlignment.Center
+
     label.Parent = parent
 
     return label
 end
 
-S.CreateButton = function(parent, name, text, size, position, callback)
+S.CreateButton = function(parent, text, size, position, callback)
     local button = Instance.new("TextButton")
 
-    button.Name = name
-    button.Text = text
     button.Size = size
     button.Position = position
-    button.BackgroundColor3 = Color3.fromRGB(35, 43, 62)
-    button.TextColor3 = Color3.fromRGB(235, 240, 255)
-    button.Font = Enum.Font.GothamSemibold
-    button.TextSize = 13
-    button.AutoButtonColor = true
+
+    button.BackgroundColor3 = Color3.fromRGB(35, 48, 72)
     button.BorderSizePixel = 0
+
+    button.Font = Enum.Font.GothamBold
+    button.Text = text
+    button.TextSize = 12
+    button.TextColor3 = Color3.fromRGB(235, 240, 250)
+
+    button.AutoButtonColor = true
+
     button.Parent = parent
 
-    S.CreateCorner(button, 8)
-    S.CreateStroke(button, Color3.fromRGB(70, 85, 115), 1)
+    S.CreateCorner(button, 7)
+    S.CreateStroke(
+        button,
+        Color3.fromRGB(75, 105, 155),
+        1,
+        0.35
+    )
 
-    button.Activated:Connect(function()
-        if callback then
-            local success, err = pcall(callback)
-
-            if not success then
-                warn("[R6System UI] Erro no botão:", err)
-            end
-        end
-    end)
+    if callback then
+        button.Activated:Connect(callback)
+    end
 
     return button
 end
 
---//====================================================
---// PAINEL PRINCIPAL
---//====================================================
+--========================================================--
+-- PAINEL PRINCIPAL
+--========================================================--
 
-S.Main = Instance.new("Frame")
-S.Main.Name = "Main"
-S.Main.Size = UDim2.fromOffset(310, 205)
-S.Main.Position = UDim2.new(0.5, -155, 0.5, -102)
-S.Main.BackgroundColor3 = Color3.fromRGB(19, 23, 35)
-S.Main.BorderSizePixel = 0
-S.Main.Active = true
-S.Main.Visible = true
-S.Main.Parent = S.ScreenGui
+local main = Instance.new("Frame")
 
-S.CreateCorner(S.Main, 12)
-S.CreateStroke(S.Main, Color3.fromRGB(75, 95, 140), 1.3)
+main.Name = "Main"
+main.Size = UDim2.fromOffset(310, 205)
+main.Position = UDim2.new(0.5, -155, 0.5, -102)
 
---//====================================================
---// CABEÇALHO
---//====================================================
+main.BackgroundColor3 = Color3.fromRGB(16, 20, 31)
+main.BorderSizePixel = 0
 
-S.UI.Header = Instance.new("Frame")
-S.UI.Header.Name = "Header"
-S.UI.Header.Size = UDim2.new(1, 0, 0, 42)
-S.UI.Header.BackgroundColor3 = Color3.fromRGB(29, 37, 57)
-S.UI.Header.BorderSizePixel = 0
-S.UI.Header.Active = true
-S.UI.Header.Parent = S.Main
+main.Active = true
+main.ClipsDescendants = true
 
-S.CreateCorner(S.UI.Header, 12)
+main.Parent = screenGui
 
-S.UI.Title = S.CreateLabel(
-    S.UI.Header,
-    "Title",
-    "R6 SYSTEM",
-    UDim2.new(1, -90, 1, 0),
-    UDim2.fromOffset(13, 0),
-    15
+S.Main = main
+
+S.CreateCorner(main, 12)
+S.CreateStroke(
+    main,
+    Color3.fromRGB(65, 105, 180),
+    1.4,
+    0.15
 )
 
-S.UI.Title.Font = Enum.Font.GothamBold
+--========================================================--
+-- CABEÇALHO
+--========================================================--
 
---//====================================================
---// MINIMIZAR
---//====================================================
+local header = Instance.new("Frame")
+
+header.Name = "Header"
+header.Size = UDim2.new(1, 0, 0, 42)
+
+header.BackgroundColor3 = Color3.fromRGB(25, 34, 54)
+header.BorderSizePixel = 0
+
+header.Parent = main
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 12)
+headerCorner.Parent = header
+
+local headerCover = Instance.new("Frame")
+headerCover.Size = UDim2.new(1, 0, 0, 12)
+headerCover.Position = UDim2.new(0, 0, 1, -12)
+
+headerCover.BackgroundColor3 = header.BackgroundColor3
+headerCover.BorderSizePixel = 0
+headerCover.Parent = header
+
+local title = S.CreateLabel(
+    header,
+    "R6 AVATAR",
+    UDim2.new(1, -115, 1, 0),
+    UDim2.fromOffset(12, 0),
+    14
+)
+
+title.Font = Enum.Font.GothamBold
+title.TextColor3 = Color3.fromRGB(110, 175, 255)
+
+--========================================================--
+-- BOTÕES DO CABEÇALHO
+--========================================================--
+
+local minimizeButton = S.CreateButton(
+    header,
+    "−",
+    UDim2.fromOffset(30, 28),
+    UDim2.new(1, -72, 0, 7),
+    nil
+)
+
+minimizeButton.Name = "MinimizeButton"
+minimizeButton.TextSize = 19
+minimizeButton.BackgroundColor3 = Color3.fromRGB(43, 58, 85)
+
+local closeButton = S.CreateButton(
+    header,
+    "×",
+    UDim2.fromOffset(30, 28),
+    UDim2.new(1, -36, 0, 7),
+    nil
+)
+
+closeButton.Name = "CloseButton"
+closeButton.TextSize = 18
+closeButton.BackgroundColor3 = Color3.fromRGB(120, 43, 53)
+
+--========================================================--
+-- CONTEÚDO
+--========================================================--
+
+local content = Instance.new("Frame")
+
+content.Name = "Content"
+content.Size = UDim2.new(1, -20, 1, -52)
+content.Position = UDim2.fromOffset(10, 47)
+
+content.BackgroundTransparency = 1
+content.Parent = main
+
+--========================================================--
+-- INFORMAÇÕES
+--========================================================--
+
+local modeLabel = S.CreateLabel(
+    content,
+    "Modo: " .. tostring(S.CurrentMode),
+    UDim2.new(1, 0, 0, 23),
+    UDim2.fromOffset(2, 0),
+    12
+)
+
+modeLabel.Name = "ModeLabel"
+
+S.ModeLabel = modeLabel
+
+local statusLabel = S.CreateLabel(
+    content,
+    "NPCs: 0",
+    UDim2.new(1, 0, 0, 23),
+    UDim2.fromOffset(2, 25),
+    12
+)
+
+statusLabel.Name = "StatusLabel"
+statusLabel.TextColor3 = Color3.fromRGB(155, 180, 210)
+
+--========================================================--
+-- SEPARADOR
+--========================================================--
+
+local separator = Instance.new("Frame")
+
+separator.Size = UDim2.new(1, 0, 0, 1)
+separator.Position = UDim2.fromOffset(0, 53)
+
+separator.BackgroundColor3 = Color3.fromRGB(55, 70, 95)
+separator.BorderSizePixel = 0
+
+separator.Parent = content
+
+--========================================================--
+-- BOTÕES DE MODO
+--========================================================--
+
+local classicButton = S.CreateButton(
+    content,
+    "CLASSIC",
+    UDim2.new(0.48, 0, 0, 38),
+    UDim2.fromOffset(0, 65),
+    function()
+        S.ChangeMode("Classic")
+    end
+)
+
+classicButton.Name = "ClassicButton"
+
+local animatedButton = S.CreateButton(
+    content,
+    "ANIMATED",
+    UDim2.new(0.48, 0, 0, 38),
+    UDim2.new(0.52, 0, 0, 65),
+    function()
+        S.ChangeMode("Animated")
+    end
+)
+
+animatedButton.Name = "AnimatedButton"
+
+--========================================================--
+-- RODAPÉ
+--========================================================--
+
+local footer = S.CreateLabel(
+    content,
+    "Monitoramento automático ativo",
+    UDim2.new(1, 0, 0, 22),
+    UDim2.fromOffset(2, 111),
+    10
+)
+
+footer.TextColor3 = Color3.fromRGB(115, 150, 190)
+footer.TextXAlignment = Enum.TextXAlignment.Center
+
+--========================================================--
+-- MINIMIZAR E RESTAURAR
+--========================================================--
 
 S.Minimized = false
 
-S.SetMinimized = function(minimized)
+S.SetMinimized = function(value)
     if not S.Main or not S.Main.Parent then
         return
     end
 
-    S.Minimized = minimized
+    S.Minimized = value
 
-    if minimized then
-        S.Main.Size = UDim2.fromOffset(310, 42)
+    if value then
 
         for _, child in ipairs(S.Main:GetChildren()) do
-            if child ~= S.UI.Header
+
+            if child ~= header
                 and not child:IsA("UICorner")
                 and not child:IsA("UIStroke") then
 
@@ -2150,13 +2539,15 @@ S.SetMinimized = function(minimized)
             end
         end
 
-        S.MinimizeButton.Text = "+"
+        main.Size = UDim2.fromOffset(310, 42)
+
+        minimizeButton.Text = "+"
 
     else
-        S.Main.Size = UDim2.fromOffset(310, 205)
 
         for _, child in ipairs(S.Main:GetChildren()) do
-            if child ~= S.UI.Header
+
+            if child ~= header
                 and not child:IsA("UICorner")
                 and not child:IsA("UIStroke") then
 
@@ -2164,363 +2555,272 @@ S.SetMinimized = function(minimized)
             end
         end
 
-        S.MinimizeButton.Text = "—"
+        main.Size = UDim2.fromOffset(310, 205)
+
+        minimizeButton.Text = "−"
     end
 end
 
-S.MinimizeButton = S.CreateButton(
-    S.UI.Header,
-    "Minimize",
-    "—",
-    UDim2.fromOffset(30, 27),
-    UDim2.new(1, -70, 0, 7),
-    function()
-        S.SetMinimized(not S.Minimized)
-    end
+minimizeButton.Activated:Connect(function()
+    S.SetMinimized(not S.Minimized)
+end)
+
+--========================================================--
+-- FECHAR E REABRIR
+--========================================================--
+
+local reopenButton = S.CreateButton(
+    screenGui,
+    "R6",
+    UDim2.fromOffset(48, 42),
+    UDim2.new(0, 15, 0.5, -21),
+    nil
 )
 
---//====================================================
---// FECHAR
---//====================================================
+reopenButton.Name = "ReopenButton"
+reopenButton.Visible = false
 
-S.CloseButton = S.CreateButton(
-    S.UI.Header,
-    "Close",
-    "×",
-    UDim2.fromOffset(30, 27),
-    UDim2.new(1, -35, 0, 7),
-    function()
-        -- Não desativar ScreenGui.
-        -- O botão de reabrir precisa continuar visível.
+reopenButton.BackgroundColor3 = Color3.fromRGB(25, 55, 100)
+reopenButton.TextSize = 14
 
-        S.Main.Visible = false
+S.Reopen = reopenButton
 
-        if S.Reopen then
-            S.Reopen.Visible = true
-        end
-    end
-)
+closeButton.Activated:Connect(function()
 
---//====================================================
---// INFORMAÇÕES
---//====================================================
+    main.Visible = false
+    reopenButton.Visible = true
+end)
 
-S.ModeLabel = S.CreateLabel(
-    S.Main,
-    "ModeLabel",
-    "Modo: " .. tostring(S.CurrentMode),
-    UDim2.new(1, -24, 0, 22),
-    UDim2.fromOffset(13, 50),
-    13
-)
+reopenButton.Activated:Connect(function()
 
-S.Status = S.CreateLabel(
-    S.Main,
-    "Status",
-    "NPCs: 0",
-    UDim2.new(1, -24, 0, 20),
-    UDim2.fromOffset(13, 76),
-    12
-)
+    main.Visible = true
+    reopenButton.Visible = false
+end)
 
---//====================================================
---// BOTÕES DE MODO
---//====================================================
+--========================================================--
+-- ARRASTAR INTERFACE
+--========================================================--
 
-S.ClassicButton = S.CreateButton(
-    S.Main,
-    "ClassicButton",
-    "CLASSIC",
-    UDim2.new(0.5, -19, 0, 38),
-    UDim2.fromOffset(13, 112),
-    function()
-        S.ChangeMode("Classic")
-    end
-)
+local dragging = false
+local dragInput = nil
 
-S.AnimatedButton = S.CreateButton(
-    S.Main,
-    "AnimatedButton",
-    "ANIMATED",
-    UDim2.new(0.5, -19, 0, 38),
-    UDim2.new(0.5, 6, 0, 112),
-    function()
-        S.ChangeMode("Animated")
-    end
-)
+local dragStart = nil
+local startPosition = nil
 
---//====================================================
---// ATUALIZAÇÃO MANUAL
---//====================================================
+header.InputBegan:Connect(function(input)
 
-S.UI.RefreshButton = S.CreateButton(
-    S.Main,
-    "RefreshButton",
-    "ATUALIZAR NPCs",
-    UDim2.new(1, -26, 0, 30),
-    UDim2.fromOffset(13, 158),
-    function()
-        if S.RefreshNPCSystem then
-            S.RefreshNPCSystem()
-        end
-    end
-)
-
---//====================================================
---// ARRASTAR JANELA — PC E MOBILE
---//====================================================
-
-S.Dragging = false
-S.DragInput = nil
-S.DragStart = nil
-S.StartPosition = nil
-
-S.UI.Header.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
 
-        S.Dragging = true
-        S.DragStart = input.Position
-        S.StartPosition = S.Main.Position
+        dragging = true
+
+        dragStart = input.Position
+        startPosition = main.Position
 
         input.Changed:Connect(function()
+
             if input.UserInputState == Enum.UserInputState.End then
-                S.Dragging = false
-                S.DragInput = nil
+                dragging = false
             end
         end)
     end
 end)
 
-S.UI.Header.InputChanged:Connect(function(input)
+header.InputChanged:Connect(function(input)
+
     if input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch then
 
-        S.DragInput = input
+        dragInput = input
     end
 end)
 
-S.Connect(
-    S.GlobalConnections,
-    S.UserInputService.InputChanged:Connect(function(input)
-        if not S.Dragging
-            or not S.DragStart
-            or not S.StartPosition then
+S.UserInputService.InputChanged:Connect(function(input)
 
-            return
-        end
+    if dragging and input == dragInput then
 
-        if input == S.DragInput then
-            local delta = input.Position - S.DragStart
+        local delta = input.Position - dragStart
 
-            S.Main.Position = UDim2.new(
-                S.StartPosition.X.Scale,
-                S.StartPosition.X.Offset + delta.X,
-                S.StartPosition.Y.Scale,
-                S.StartPosition.Y.Offset + delta.Y
-            )
-        end
-    end)
-)
+        main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
 
-S.Connect(
-    S.GlobalConnections,
-    S.UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-
-            S.Dragging = false
-            S.DragInput = nil
-        end
-    end)
-)
-
---//====================================================
---// BOTÃO FLUTUANTE PARA REABRIR
---//====================================================
-
-S.Reopen = Instance.new("TextButton")
-S.Reopen.Name = "ReopenButton"
-S.Reopen.Size = UDim2.fromOffset(48, 48)
-S.Reopen.Position = UDim2.new(0, 15, 0.5, -24)
-S.Reopen.BackgroundColor3 = Color3.fromRGB(35, 48, 75)
-S.Reopen.Text = "R6"
-S.Reopen.TextColor3 = Color3.fromRGB(255, 255, 255)
-S.Reopen.Font = Enum.Font.GothamBold
-S.Reopen.TextSize = 15
-S.Reopen.BorderSizePixel = 0
-S.Reopen.Visible = false
-S.Reopen.Parent = S.ScreenGui
-
-S.CreateCorner(S.Reopen, 14)
-S.CreateStroke(S.Reopen, Color3.fromRGB(90, 125, 190), 1.5)
-
-S.Reopen.Activated:Connect(function()
-    S.Main.Visible = true
-    S.ScreenGui.Enabled = true
-    S.Reopen.Visible = false
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
 end)
 
---//====================================================
---// ATUALIZAÇÃO DOS BOTÕES
---//====================================================
+--========================================================--
+-- ATUALIZAR VISUAL DOS MODOS
+--========================================================--
 
 S.RefreshModeButtons = function()
-    if not S.ClassicButton or not S.AnimatedButton then
+    if not S.UI or not S.UI.Parent then
         return
-    end
-
-    if S.CurrentMode == "Classic" then
-        S.ClassicButton.BackgroundColor3 =
-            Color3.fromRGB(40, 105, 85)
-
-        S.AnimatedButton.BackgroundColor3 =
-            Color3.fromRGB(35, 43, 62)
-
-    else
-        S.AnimatedButton.BackgroundColor3 =
-            Color3.fromRGB(40, 105, 85)
-
-        S.ClassicButton.BackgroundColor3 =
-            Color3.fromRGB(35, 43, 62)
     end
 
     if S.ModeLabel then
-        S.ModeLabel.Text = "Modo: " .. tostring(S.CurrentMode)
+        S.ModeLabel.Text =
+            "Modo: " .. tostring(S.CurrentMode)
+    end
+
+    if classicButton and classicButton.Parent then
+
+        classicButton.BackgroundColor3 =
+            S.CurrentMode == "Classic"
+            and Color3.fromRGB(35, 105, 175)
+            or Color3.fromRGB(35, 48, 72)
+    end
+
+    if animatedButton and animatedButton.Parent then
+
+        animatedButton.BackgroundColor3 =
+            S.CurrentMode == "Animated"
+            and Color3.fromRGB(35, 105, 175)
+            or Color3.fromRGB(35, 48, 72)
     end
 end
-
---//====================================================
---// MONITORAMENTO AUTOMÁTICO DE NPCs
---//====================================================
-
-S.LastNPCScan = 0
-S.NPCScanInterval = 3
-S.NPCUpdateInterval = 0.15
-S.LastNPCUpdate = 0
-
-if S.NPCUpdateConnection then
-    S.NPCUpdateConnection:Disconnect()
-    S.NPCUpdateConnection = nil
-end
-
-S.NPCUpdateConnection = S.RunService.Heartbeat:Connect(function()
-    if not S.RUNNING then
-        return
-    end
-
-    local now = os.clock()
-
-    -- Buscar NPCs novos automaticamente
-    if now - S.LastNPCScan >= S.NPCScanInterval then
-        S.LastNPCScan = now
-
-        if S.ScanNPCs then
-            local success, err = pcall(function()
-                S.ScanNPCs()
-            end)
-
-            if not success then
-                warn("[R6System] Erro ao procurar NPCs:", err)
-            end
-        end
-    end
-
-    -- Atualizar NPCs transformados
-    if now - S.LastNPCUpdate >= S.NPCUpdateInterval then
-        S.LastNPCUpdate = now
-
-        if S.UpdateNPCs then
-            local success, err = pcall(function()
-                S.UpdateNPCs()
-            end)
-
-            if not success then
-                warn("[R6System] Erro ao atualizar NPCs:", err)
-            end
-        end
-    end
-
-    -- Atualizar contador
-    if S.Status and S.NPCStates then
-        local count = 0
-
-        for _ in pairs(S.NPCStates) do
-            count += 1
-        end
-
-        S.Status.Text = "NPCs: " .. tostring(count)
-    end
-end)
-
---//====================================================
---// INICIALIZAÇÃO VISUAL
---//====================================================
 
 S.RefreshModeButtons()
 
-print("[R6System] Parte D carregada: interface e monitoramento automático.")
---//====================================================
---// R6 AVATAR + NPCs
---// PARTE E/5 — LAST SURVIVOR, RESPAWN E INICIALIZAÇÃO
---//====================================================
+--========================================================--
+-- MONITORAMENTO AUTOMÁTICO
+--========================================================--
 
-local S = ((getgenv and getgenv()) or _G).R6System
+S.LastNPCScan = 0
+S.LastNPCUpdate = 0
+S.LastUIUpdate = 0
 
-assert(S, "Execute a Parte A antes da Parte E.")
+S.NPCUpdateConnection =
+    S.RunService.Heartbeat:Connect(function()
 
---//====================================================
---// CONFIGURAÇÕES DA MÚSICA
---//====================================================
+        if not S.RUNNING then
+            return
+        end
 
-S.LAST_SURVIVOR_URL = S.LAST_SURVIVOR_URL
-    or "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+        local now = os.clock()
 
-S.LAST_SURVIVOR_FILE = "R6System_LastSurvivor.mp3"
-S.LAST_SURVIVOR_VOLUME = 0.7
-S.LAST_SURVIVOR_INTERVAL = 1
+        -- Varredura periódica automática.
+        if now - S.LastNPCScan >= S.CONFIG.SCAN_INTERVAL then
+
+            S.LastNPCScan = now
+
+            task.spawn(function()
+
+                if S.RUNNING then
+                    S.ScanNPCs()
+                end
+            end)
+        end
+
+        -- Atualização contínua dos NPCs.
+        if now - S.LastNPCUpdate >= 0.15 then
+
+            S.LastNPCUpdate = now
+
+            S.UpdateNPCs()
+        end
+
+        -- Atualização do contador da interface.
+        if now - S.LastUIUpdate >= 0.5 then
+
+            S.LastUIUpdate = now
+
+            if statusLabel and statusLabel.Parent then
+
+                local count = 0
+
+                for _, state in pairs(S.NPCStates) do
+
+                    if state.Active then
+                        count += 1
+                    end
+                end
+
+                statusLabel.Text = "NPCs: " .. tostring(count)
+            end
+        end
+    end)
+
+S.Connect(
+    S.GlobalConnections,
+    S.NPCUpdateConnection
+)
+
+print("[R6System] Parte D carregada.")
+print("[R6System] NPCs monitorados automaticamente.")
+
+end
+--========================================================--
+-- R6 AVATAR + NPCs
+-- PARTE E/6 — LAST SURVIVOR, RESPAWN E INICIALIZAÇÃO
+--========================================================--
+
+do
+
+--========================================================--
+-- CONFIGURAÇÕES LAST SURVIVOR
+--========================================================--
+
+S.LAST_SURVIVOR = {
+    MUSIC_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+
+    FILE_NAME = "R6System_LastSurvivor.mp3",
+
+    VOLUME = 0.7,
+
+    CHECK_INTERVAL = 1,
+}
 
 S.LastSurvivorSound = nil
-S.LastSurvivorAsset = nil
-S.LastSurvivorDownloaded = false
-S.LastSurvivorDownloading = false
+S.LastSurvivorPlaying = false
 S.LastSurvivorMonitorConnection = nil
-S.LastSurvivorLastCheck = 0
-S.LastSurvivorGeneration = 0
 
---//====================================================
---// PASTAS DE TIMES
---//====================================================
+--========================================================--
+-- PASTAS DE TIMES
+--========================================================--
 
 S.GetTeamFolders = function()
-    local playersFolder = S.Workspace:FindFirstChild("Players")
+    local playersFolder =
+        S.Workspace:FindFirstChild("Players")
 
     if not playersFolder then
         return nil, nil
     end
 
-    return playersFolder:FindFirstChild("Killers"),
+    local killersFolder =
+        playersFolder:FindFirstChild("Killers")
+
+    local survivorsFolder =
         playersFolder:FindFirstChild("Survivors")
+
+    return killersFolder, survivorsFolder
 end
 
---//====================================================
---// VERIFICAR SE O JOGADOR É KILLER
---//====================================================
+--========================================================--
+-- VERIFICAR SE O JOGADOR LOCAL É KILLER
+--========================================================--
 
 S.IsLocalPlayerKiller = function()
-    local killersFolder = S.GetTeamFolders()
     local character = S.LocalPlayer.Character
 
-    if not killersFolder or not character then
+    if not character then
+        return false
+    end
+
+    local killersFolder = S.GetTeamFolders()
+
+    if not killersFolder then
         return false
     end
 
     return character:IsDescendantOf(killersFolder)
 end
 
---//====================================================
---// ENCONTRAR ÚNICO SOBREVIVENTE VIVO
---//====================================================
+--========================================================--
+-- ENCONTRAR ÚNICO SOBREVIVENTE VIVO
+--========================================================--
 
 S.GetSingleAliveSurvivor = function()
     local _, survivorsFolder = S.GetTeamFolders()
@@ -2529,157 +2829,207 @@ S.GetSingleAliveSurvivor = function()
         return nil
     end
 
-    local aliveSurvivors = {}
+    local aliveSurvivor = nil
+    local aliveCount = 0
 
     for _, player in ipairs(S.Players:GetPlayers()) do
+
         local character = player.Character
 
-        if character and character:IsDescendantOf(survivorsFolder) then
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if character
+            and character.Parent
+            and character:IsDescendantOf(survivorsFolder) then
+
+            local humanoid =
+                character:FindFirstChildOfClass("Humanoid")
 
             if humanoid and humanoid.Health > 0 then
-                table.insert(aliveSurvivors, player)
+
+                aliveCount += 1
+                aliveSurvivor = player
+
+                if aliveCount > 1 then
+                    return nil
+                end
             end
         end
     end
 
-    if #aliveSurvivors == 1 then
-        return aliveSurvivors[1]
+    if aliveCount == 1 then
+        return aliveSurvivor
     end
 
     return nil
 end
 
---//====================================================
---// CONDIÇÃO LAST SURVIVOR
---//====================================================
+--========================================================--
+-- VERIFICAR CONDIÇÃO LAST SURVIVOR
+--========================================================--
 
-S.ShouldPlayLastSurvivorMusic = function()
+S.ShouldPlayLastSurvivor = function()
+    if not S.RUNNING then
+        return false
+    end
+
     if not S.IsLocalPlayerKiller() then
         return false
     end
 
-    return S.GetSingleAliveSurvivor() ~= nil
+    local survivor = S.GetSingleAliveSurvivor()
+
+    return survivor ~= nil
 end
 
---//====================================================
---// OBTER ARQUIVO DE ÁUDIO
---//====================================================
+--========================================================--
+-- OBTER ASSET DA MÚSICA
+--========================================================--
 
 S.GetLastSurvivorAsset = function()
-    if S.LastSurvivorAsset then
-        return S.LastSurvivorAsset
-    end
+    local fileName = S.LAST_SURVIVOR.FILE_NAME
 
-    if S.LastSurvivorDownloading then
+    if not fileName then
         return nil
     end
 
-    S.LastSurvivorDownloading = true
+    -- Usa o arquivo já salvo, quando disponível.
+    if isfile and getcustomasset then
 
-    local success, result = pcall(function()
-        if not isfile or not writefile or not getcustomasset then
-            error("Funções de arquivo/asset não disponíveis.")
-        end
-
-        if not isfile(S.LAST_SURVIVOR_FILE) then
-            local response = game:HttpGet(S.LAST_SURVIVOR_URL)
-
-            if not response or #response == 0 then
-                error("O arquivo de áudio retornou vazio.")
-            end
-
-            writefile(S.LAST_SURVIVOR_FILE, response)
-        end
-
-        S.LastSurvivorDownloaded = true
-
-        return getcustomasset(S.LAST_SURVIVOR_FILE)
-    end)
-
-    S.LastSurvivorDownloading = false
-
-    if success and result then
-        S.LastSurvivorAsset = result
-        return result
-    end
-
-    warn(
-        "[R6System] Não foi possível carregar a música Last Survivor:",
-        result
-    )
-
-    return nil
-end
-
---//====================================================
---// PARAR MÚSICA
---//====================================================
-
-S.StopLastSurvivorMusic = function()
-    if S.LastSurvivorSound then
-        pcall(function()
-            S.LastSurvivorSound:Stop()
-            S.LastSurvivorSound:Destroy()
+        local success, exists = pcall(function()
+            return isfile(fileName)
         end)
 
-        S.LastSurvivorSound = nil
+        if success and exists then
+
+            local assetSuccess, asset = pcall(function()
+                return getcustomasset(fileName)
+            end)
+
+            if assetSuccess and asset then
+                return asset
+            end
+        end
     end
+
+    -- Baixa o arquivo quando necessário.
+    if writefile and game.HttpGet then
+
+        local success, result = pcall(function()
+            return game:HttpGet(
+                S.LAST_SURVIVOR.MUSIC_URL
+            )
+        end)
+
+        if success and result and #result > 0 then
+
+            local writeSuccess = pcall(function()
+                writefile(fileName, result)
+            end)
+
+            if writeSuccess and getcustomasset then
+
+                local assetSuccess, asset = pcall(function()
+                    return getcustomasset(fileName)
+                end)
+
+                if assetSuccess and asset then
+                    return asset
+                end
+            end
+        end
+    end
+
+    -- Fallback para URL.
+    return S.LAST_SURVIVOR.MUSIC_URL
 end
 
---//====================================================
---// INICIAR MÚSICA
---//====================================================
+--========================================================--
+-- PARAR MÚSICA
+--========================================================--
+
+S.StopLastSurvivorMusic = function()
+    S.LastSurvivorPlaying = false
+
+    local sound = S.LastSurvivorSound
+
+    if sound then
+
+        pcall(function()
+            sound:Stop()
+            sound:Destroy()
+        end)
+    end
+
+    S.LastSurvivorSound = nil
+end
+
+--========================================================--
+-- INICIAR MÚSICA
+--========================================================--
 
 S.StartLastSurvivorMusic = function()
     if not S.RUNNING then
         return
     end
 
-    if S.LastSurvivorSound and S.LastSurvivorSound.IsPlaying then
+    if S.LastSurvivorPlaying then
         return
     end
 
-    local asset = S.GetLastSurvivorAsset()
+    S.LastSurvivorPlaying = true
 
-    if not asset or not S.RUNNING then
-        return
-    end
+    task.spawn(function()
 
-    -- Evitar duplicação de sons.
-    S.StopLastSurvivorMusic()
+        if not S.RUNNING then
+            S.LastSurvivorPlaying = false
+            return
+        end
 
-    local sound = Instance.new("Sound")
+        local asset = S.GetLastSurvivorAsset()
 
-    sound.Name = "R6System_LastSurvivor"
-    sound.SoundId = asset
-    sound.Volume = S.LAST_SURVIVOR_VOLUME
-    sound.Looped = true
-    sound.Parent = S.SoundService
+        if not S.RUNNING then
+            S.LastSurvivorPlaying = false
+            return
+        end
 
-    S.LastSurvivorSound = sound
+        if not asset then
+            S.LastSurvivorPlaying = false
+            return
+        end
 
-    local success, err = pcall(function()
-        sound:Play()
+        local sound = Instance.new("Sound")
+
+        sound.Name = "R6_LastSurvivorMusic"
+        sound.SoundId = asset
+        sound.Volume = S.LAST_SURVIVOR.VOLUME
+        sound.Looped = true
+
+        sound.Parent = S.SoundService
+
+        S.LastSurvivorSound = sound
+
+        local loaded = pcall(function()
+            sound:Play()
+        end)
+
+        if not loaded then
+
+            S.StopLastSurvivorMusic()
+            return
+        end
+
+        -- Evita manter música caso a condição tenha mudado
+        -- durante o carregamento do asset.
+        if not S.RUNNING
+            or not S.ShouldPlayLastSurvivor() then
+
+            S.StopLastSurvivorMusic()
+        end
     end)
-
-    if not success then
-        warn("[R6System] Erro ao iniciar música:", err)
-
-        S.StopLastSurvivorMusic()
-    end
 end
 
---//====================================================
---// MONITORAR LAST SURVIVOR
---//====================================================
-
-if S.LastSurvivorMonitorConnection then
-    S.LastSurvivorMonitorConnection:Disconnect()
-    S.LastSurvivorMonitorConnection = nil
-end
-
-S.LastSurvivorLastCheck = 0
+--========================================================--
+-- MONITORAR LAST SURVIVOR
+--========================================================--
 
 S.LastSurvivorMonitorConnection =
     S.RunService.Heartbeat:Connect(function()
@@ -2690,78 +3040,88 @@ S.LastSurvivorMonitorConnection =
 
         local now = os.clock()
 
-        if now - S.LastSurvivorLastCheck < S.LAST_SURVIVOR_INTERVAL then
+        if not S.LastSurvivorNextCheck then
+            S.LastSurvivorNextCheck = 0
+        end
+
+        if now < S.LastSurvivorNextCheck then
             return
         end
 
-        S.LastSurvivorLastCheck = now
+        S.LastSurvivorNextCheck =
+            now + S.LAST_SURVIVOR.CHECK_INTERVAL
 
-        local shouldPlay = false
+        if S.ShouldPlayLastSurvivor() then
 
-        local success, result = pcall(function()
-            return S.ShouldPlayLastSurvivorMusic()
-        end)
-
-        if success then
-            shouldPlay = result
-        else
-            warn("[R6System] Erro ao verificar Last Survivor:", result)
-        end
-
-        if shouldPlay then
-            if not S.LastSurvivorSound
-                and not S.LastSurvivorDownloading then
-
-                -- Carregamento em segundo plano.
-                task.spawn(function()
-                    if not S.RUNNING then
-                        return
-                    end
-
-                    S.StartLastSurvivorMusic()
-                end)
+            if not S.LastSurvivorPlaying then
+                S.StartLastSurvivorMusic()
             end
+
         else
-            S.StopLastSurvivorMusic()
+
+            if S.LastSurvivorPlaying
+                or S.LastSurvivorSound then
+
+                S.StopLastSurvivorMusic()
+            end
         end
     end)
 
---//====================================================
---// RESPAWN DO JOGADOR
---//====================================================
-
 S.Connect(
     S.GlobalConnections,
+    S.LastSurvivorMonitorConnection
+)
 
+--========================================================--
+-- RESPAWN DO PERSONAGEM
+--========================================================--
+
+S.CharacterAddedConnection =
     S.LocalPlayer.CharacterAdded:Connect(function(character)
+
         if not S.RUNNING then
             return
         end
 
         task.spawn(function()
-            local humanoid = character:WaitForChild("Humanoid", 10)
-            local root = character:WaitForChild("HumanoidRootPart", 10)
 
-            if not S.RUNNING
-                or not humanoid
-                or not root then
+            local humanoid =
+                character:WaitForChild("Humanoid", 15)
 
+            local root =
+                character:WaitForChild(
+                    "HumanoidRootPart",
+                    15
+                )
+
+            if not S.RUNNING then
                 return
             end
 
-            -- Impedir que um respawn antigo substitua o personagem atual.
+            if not humanoid or not root then
+                return
+            end
+
             if S.LocalPlayer.Character ~= character then
                 return
             end
 
             S.SetupLocal(character)
+
+            if S.RefreshModeButtons then
+                S.RefreshModeButtons()
+            end
         end)
     end)
+
+S.Connect(
+    S.GlobalConnections,
+    S.CharacterAddedConnection
 )
 
---//====================================================
---// ENCERRAMENTO COMPLETO
---//====================================================
+--========================================================--
+-- ENCERRAMENTO COMPLETO
+--========================================================--
 
 S.Shutdown = function()
     if not S.RUNNING then
@@ -2770,91 +3130,122 @@ S.Shutdown = function()
 
     S.RUNNING = false
 
-    -- Invalidar tarefas assíncronas anteriores.
-    S.LastSurvivorGeneration =
-        (S.LastSurvivorGeneration or 0) + 1
+    S.Generation = (S.Generation or 0) + 1
 
-    -- Monitoramento principal.
+    -- Para monitoramento NPC.
     if S.NPCUpdateConnection then
-        S.NPCUpdateConnection:Disconnect()
+
+        pcall(function()
+            S.NPCUpdateConnection:Disconnect()
+        end)
+
         S.NPCUpdateConnection = nil
     end
 
+    -- Para monitoramento Last Survivor.
     if S.LastSurvivorMonitorConnection then
-        S.LastSurvivorMonitorConnection:Disconnect()
+
+        pcall(function()
+            S.LastSurvivorMonitorConnection:Disconnect()
+        end)
+
         S.LastSurvivorMonitorConnection = nil
     end
 
-    -- Conexões globais.
-    if S.DisconnectAll then
-        S.DisconnectAll(S.GlobalConnections)
-    end
+    -- Desconecta todas as conexões globais.
+    S.DisconnectAll(S.GlobalConnections)
 
-    -- Música.
+    -- Para música.
     S.StopLastSurvivorMusic()
 
-    -- Jogador.
-    if S.CleanupLocal then
-        S.CleanupLocal()
+    -- Limpa personagem local.
+    S.CleanupLocal()
+
+    -- Limpa todos os NPCs.
+    local models = {}
+
+    for model in pairs(S.NPCStates) do
+        table.insert(models, model)
     end
 
-    -- NPCs.
-    local npcs = {}
-
-    for npc in pairs(S.NPCStates or {}) do
-        table.insert(npcs, npc)
+    for _, model in ipairs(models) do
+        S.DestroyNPCState(model)
     end
 
-    for _, npc in ipairs(npcs) do
-        if S.DestroyNPCState then
-            pcall(function()
-                S.DestroyNPCState(npc)
-            end)
-        end
+    -- Remove interface.
+    if S.UI then
+
+        pcall(function()
+            S.UI:Destroy()
+        end)
     end
 
-    -- Interface.
-    if S.ScreenGui then
-        S.ScreenGui:Destroy()
-        S.ScreenGui = nil
-    end
-
-    S.UI = {}
-
+    S.UI = nil
     S.Main = nil
     S.Reopen = nil
-
-    S.ClassicButton = nil
-    S.AnimatedButton = nil
     S.ModeLabel = nil
-    S.Status = nil
 
     S.Initialized = false
 
     print("[R6System] Sistema encerrado.")
 end
 
---//====================================================
---// INICIALIZAÇÃO FINAL
---//====================================================
+--========================================================--
+-- INICIALIZAÇÃO FINAL
+--========================================================--
 
+if not S.RUNNING then
+    return
+end
+
+-- Atualiza os botões da interface.
 if S.RefreshModeButtons then
     S.RefreshModeButtons()
 end
 
-if S.LocalPlayer.Character then
-    S.SetupLocal(S.LocalPlayer.Character)
+-- Configura personagem atual.
+local currentCharacter = S.LocalPlayer.Character
+
+if currentCharacter then
+
+    task.spawn(function()
+
+        local humanoid =
+            currentCharacter:WaitForChild("Humanoid", 15)
+
+        local root =
+            currentCharacter:WaitForChild(
+                "HumanoidRootPart",
+                15
+            )
+
+        if S.RUNNING
+            and humanoid
+            and root
+            and S.LocalPlayer.Character == currentCharacter then
+
+            S.SetupLocal(currentCharacter)
+        end
+    end)
 end
 
-if S.RefreshNPCSystem then
-    S.RefreshNPCSystem()
-end
+-- Primeira varredura automática.
+task.spawn(function()
 
+    if S.RUNNING then
+        S.RefreshNPCSystem()
+    end
+end)
+
+-- Marca inicialização.
 S.Initialized = true
 
-print("========================================")
-print("[R6System] Sistema carregado com sucesso!")
-print("[R6System] Partes A, B, C, D e E concluídas.")
-print("[R6System] Modo atual:", S.CurrentMode)
-print("[R6System] Para encerrar: R6System.Shutdown()")
-print("========================================")
+print("======================================")
+print("[R6System] SISTEMA INICIALIZADO")
+print("[R6System] Modo:", S.CurrentMode)
+print("[R6System] NPCs: monitoramento automático")
+print("[R6System] Interface: carregada")
+print("[R6System] Last Survivor: monitoramento ativo")
+print("======================================")
+
+end

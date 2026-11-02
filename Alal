@@ -293,6 +293,7 @@ S.GetEffectivePartSize = function(part)
 end
 
 print("[R6System] Parte A1 carregada.")
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE A2/6 — CRIAÇÃO DO R6 E FUNÇÕES COMPARTILHADAS
@@ -314,9 +315,7 @@ S.EnforcePartCollision = function(part)
 end
 
 S.DisableR6Collision = function(rig)
-    if not rig then
-        return
-    end
+    if not rig then return end
 
     for _, object in ipairs(rig:GetDescendants()) do
         if object:IsA("BasePart") then
@@ -330,9 +329,7 @@ end
 --========================================================--
 
 S.EnforceR6VisualProperties = function(rig)
-    if not rig then
-        return
-    end
+    if not rig then return end
 
     for _, object in ipairs(rig:GetDescendants()) do
         if object:IsA("BasePart") then
@@ -357,7 +354,6 @@ S.CreateR6 = function(sourceOrName)
 
     if typeof(sourceOrName) == "Instance" then
         name = sourceOrName.Name
-
     elseif type(sourceOrName) == "string" then
         name = sourceOrName
     end
@@ -431,7 +427,6 @@ S.CreateR6 = function(sourceOrName)
                 object.Transparency = 1
                 object.LocalTransparencyModifier = 1
                 object.CastShadow = false
-
             else
                 object.Transparency = 0
                 object.LocalTransparencyModifier = 0
@@ -447,10 +442,7 @@ S.CreateR6 = function(sourceOrName)
         end
     end
 
-    -- O root permanece ancorado.
-    -- O acompanhamento do personagem será feito pela Parte C.
     root.Anchored = true
-
     rig.Parent = S.Workspace
 
     return rig, humanoid, root
@@ -504,9 +496,7 @@ S.NPCPartMap = {
 }
 
 S.FindNPCSourcePart = function(source, targetName)
-    if not source then
-        return nil
-    end
+    if not source then return nil end
 
     if not targetName then
         return source:FindFirstChild(
@@ -533,9 +523,7 @@ S.FindNPCSourcePart = function(source, targetName)
 end
 
 S.GetBodyPart = function(rig, name)
-    if not rig then
-        return nil
-    end
+    if not rig then return nil end
 
     local part = rig:FindFirstChild(name)
 
@@ -551,15 +539,40 @@ end
 --========================================================--
 
 S.RemoveInternalMotor6Ds = function(rig)
-    if not rig then
-        return
-    end
+    if not rig then return end
 
     for _, object in ipairs(rig:GetDescendants()) do
         if object:IsA("Motor6D") then
             object:Destroy()
         end
     end
+end
+
+--========================================================--
+-- CAPTURA DE TAMANHOS-BASE
+--========================================================--
+
+S.CapturePartPair = function(sourcePart, targetPart)
+    if not sourcePart
+        or not targetPart
+        or not sourcePart:IsA("BasePart")
+        or not targetPart:IsA("BasePart") then
+        return nil
+    end
+
+    local sourceSize = S.GetEffectivePartSize(sourcePart)
+
+    return {
+        Source = sourcePart,
+        Target = targetPart,
+
+        -- Referências imutáveis durante a vida deste par.
+        OriginalSourceSize = sourceSize,
+        OriginalTargetSize = targetPart.Size,
+
+        LastSourceSize = sourceSize,
+        LastTargetSize = targetPart.Size,
+    }
 end
 
 --========================================================--
@@ -583,16 +596,13 @@ S.CreateNPCPartWeld = function(
     state.PartPairs = state.PartPairs or {}
 
     local key = targetPart.Name
+    local previous = state.PartPairs[key]
 
-    if state.PartPairs[key]
-        and state.PartPairs[key].Weld then
-
-        state.PartPairs[key].Weld:Destroy()
+    if previous and previous.Weld then
+        previous.Weld:Destroy()
     end
 
     targetPart.CFrame = sourcePart.CFrame
-
-    -- Mantém a desancoragem necessária para o weld.
     targetPart.Anchored = false
 
     local weld = Instance.new("WeldConstraint")
@@ -602,21 +612,22 @@ S.CreateNPCPartWeld = function(
     weld.Part1 = targetPart
     weld.Parent = targetPart
 
-    state.PartPairs[key] = {
-        Source = sourcePart,
-        Target = targetPart,
-        Weld = weld,
+    local pair = S.CapturePartPair(
+        sourcePart,
+        targetPart
+    )
 
-        OriginalSourceSize =
-            S.GetEffectivePartSize(sourcePart),
+    if not pair then
+        weld:Destroy()
+        return
+    end
 
-        OriginalTargetSize = targetPart.Size,
-    }
+    pair.Weld = weld
+    state.PartPairs[key] = pair
 end
 
 --========================================================--
 -- WELDS INDIVIDUAIS
--- USADO PELOS NPCs E PELO MODO ANIMATED
 --========================================================--
 
 S.BuildIndividualWelds = function(state)
@@ -650,7 +661,6 @@ end
 
 --========================================================--
 -- PARES DO CLASSIC
--- PRESERVA OS MOTOR6D
 --========================================================--
 
 S.BuildClassicPartPairs = function(state)
@@ -659,10 +669,6 @@ S.BuildClassicPartPairs = function(state)
     end
 
     state.PartPairs = {}
-
-    -- Não remove Motor6D.
-    -- Não cria WeldConstraint.
-    -- Preserva as articulações originais do R6.
 
     for _, targetPart in ipairs(state.Rig:GetChildren()) do
 
@@ -675,15 +681,14 @@ S.BuildClassicPartPairs = function(state)
 
             if sourcePart then
 
-                state.PartPairs[targetPart.Name] = {
-                    Source = sourcePart,
-                    Target = targetPart,
+                local pair = S.CapturePartPair(
+                    sourcePart,
+                    targetPart
+                )
 
-                    OriginalSourceSize =
-                        S.GetEffectivePartSize(sourcePart),
-
-                    OriginalTargetSize = targetPart.Size,
-                }
+                if pair then
+                    state.PartPairs[targetPart.Name] = pair
+                end
             end
         end
     end
@@ -714,9 +719,12 @@ S.UpdatePartSizes = function(state)
             and source.Parent
             and target.Parent then
 
+            -- Mede o tamanho visual atual da origem.
             local currentSize =
                 S.GetEffectivePartSize(source)
 
+            -- Usa sempre o tamanho-base capturado.
+            -- Não usa o tamanho aplicado no frame anterior.
             local ratio = S.GetScaleRatio(
                 pair.OriginalSourceSize,
                 currentSize
@@ -730,6 +738,9 @@ S.UpdatePartSizes = function(state)
             if (target.Size - newSize).Magnitude > 0.001 then
                 target.Size = newSize
             end
+
+            pair.LastSourceSize = currentSize
+            pair.LastTargetSize = newSize
         end
     end
 end
@@ -773,15 +784,11 @@ S.FindAccessoryBodyPart = function(state, accessory)
 end
 
 S.CaptureAccessories = function(state)
-    if not state then
-        return
-    end
+    if not state then return end
 
     state.AccessoryData = {}
 
-    if not state.Rig then
-        return
-    end
+    if not state.Rig then return end
 
     for _, accessory in ipairs(state.Rig:GetChildren()) do
 
@@ -908,6 +915,7 @@ S.UpdateAccessories = function(state)
 end
 
 print("[R6System] Parte A2 carregada.")
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE B/6 — SISTEMA DE NPCs
@@ -1349,6 +1357,7 @@ S.Connect(
 )
 
 print("[R6System] Parte B carregada.")
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE C1/6
@@ -1587,30 +1596,71 @@ end
 -- MONITORAR ALTERAÇÕES DE TAMANHO
 --========================================================--
 
+S.MonitorLocalSizeObject = function(state, object)
+    if not state
+        or not state.Active
+        or not object then
+        return
+    end
+
+    state.SizeMonitored = state.SizeMonitored or {}
+
+    if state.SizeMonitored[object] then
+        return
+    end
+
+    -- Monitorar tamanho físico das peças.
+    if object:IsA("BasePart") then
+
+        state.SizeMonitored[object] = true
+
+        S.Connect(
+            state.Connections,
+
+            object:GetPropertyChangedSignal("Size"):Connect(function()
+                if state.Active then
+                    S.UpdateLocalSizes(state)
+                end
+            end)
+        )
+
+    -- Monitorar escala visual de SpecialMesh.
+    elseif object:IsA("SpecialMesh") then
+
+        state.SizeMonitored[object] = true
+
+        S.Connect(
+            state.Connections,
+
+            object:GetPropertyChangedSignal("Scale"):Connect(function()
+                if state.Active then
+                    S.UpdateLocalSizes(state)
+                end
+            end)
+        )
+    end
+end
+
+--========================================================--
+-- MONITORAR TODAS AS PEÇAS E MESHES
+--========================================================--
+
 S.MonitorLocalSizeChanges = function(state)
     if not state or not state.Source then return end
 
     state.SizeMonitored = state.SizeMonitored or {}
 
+    -- Monitorar objetos que já existem.
     for _, object in ipairs(state.Source:GetDescendants()) do
 
         if object:IsA("BasePart")
-            and not state.SizeMonitored[object] then
+            or object:IsA("SpecialMesh") then
 
-            state.SizeMonitored[object] = true
-
-            S.Connect(
-                state.Connections,
-
-                object:GetPropertyChangedSignal("Size"):Connect(function()
-                    if state.Active then
-                        S.UpdateLocalSizes(state)
-                    end
-                end)
-            )
+            S.MonitorLocalSizeObject(state, object)
         end
     end
 
+    -- Monitorar peças e meshes adicionados posteriormente.
     S.Connect(
         state.Connections,
 
@@ -1618,19 +1668,12 @@ S.MonitorLocalSizeChanges = function(state)
             if not state.Active then return end
 
             if object:IsA("BasePart")
-                and not state.SizeMonitored[object] then
+                or object:IsA("SpecialMesh") then
 
-                state.SizeMonitored[object] = true
+                S.MonitorLocalSizeObject(state, object)
 
-                S.Connect(
-                    state.Connections,
-
-                    object:GetPropertyChangedSignal("Size"):Connect(function()
-                        if state.Active then
-                            S.UpdateLocalSizes(state)
-                        end
-                    end)
-                )
+                -- Atualiza imediatamente após a adição.
+                S.UpdateLocalSizes(state)
             end
         end)
     )
@@ -1844,6 +1887,7 @@ S.UpdateClassicAnimation = function()
 end
 
 print("[R6System] Parte C1 carregada.")
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE C2/6
@@ -2194,6 +2238,7 @@ S.ChangeMode = function(mode)
 end
 
 print("[R6System] Parte C2 carregada.")
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE D/6
@@ -2801,6 +2846,7 @@ do
     print("[R6System] Parte D carregada.")
 
 end
+
 --========================================================--
 -- R6 AVATAR + NPCs
 -- PARTE E/6

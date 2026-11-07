@@ -1452,8 +1452,12 @@ end
 -- CONNECTION VALIDATION
 --==============================================================
 
+-- CORREÇÃO:
+-- O primeiro argumento precisa ser uma Instance,
+-- portanto usamos UI.Pages["IA"], não a string "IA".
+
 local TestButton = UI.Button(
-    "IA",
+    UI.Pages["IA"],
     "VERIFICAR CONFIGURAÇÃO",
     UDim2.new(1,-5,0,36)
 )
@@ -3608,7 +3612,6 @@ print("[COS] Parte 7 carregada.")
 -- FIM DA PARTE 7/8
 --==============================================================
 
-
 --==============================================================
 -- COS — PARTE 8/8
 -- INTEGRAÇÃO FINAL E INICIALIZAÇÃO
@@ -4160,4 +4163,3 @@ print("================================")
 --==============================================================
 -- FIM DA PARTE 8/8
 --==============================================================
-

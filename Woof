@@ -1,0 +1,4218 @@
+--==============================================================
+-- COS — CHATGPTOSS
+-- PARTE 1/8 — ESTRUTURA PRINCIPAL
+--==============================================================
+
+--==============================================================
+-- SERVICES
+--==============================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TextChatService = game:GetService("TextChatService")
+local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+
+local LocalPlayer = Players.LocalPlayer
+
+--==============================================================
+-- COS CONFIGURATION
+--==============================================================
+
+local COS = {}
+
+COS.Name = "COS"
+COS.Version = "1.0.0"
+
+COS.Config = {
+
+    -- GENERAL
+    General = {
+        Enabled = true,
+        AutonomousMode = true,
+        Language = "pt-BR",
+        DebugMode = true,
+    },
+
+    -- AI
+    AI = {
+        Provider = "Custom",
+        APIKey = "",
+        BaseURL = "",
+        Model = "openai/gpt-oss-20b",
+
+        MaxTokens = 250,
+        Temperature = 0.7,
+
+        Timeout = 20,
+
+        SystemPrompt = [[
+Você é COS, um jogador de Roblox.
+
+Sua comunicação é em português brasileiro.
+Seja natural, inteligente e objetivo.
+
+Não seja excessivamente formal.
+Não abuse de emojis.
+Não invente informações.
+        ]],
+    },
+
+    -- CHAT
+    Chat = {
+        Enabled = true,
+        ReadMessages = true,
+        SendMessages = true,
+
+        RespondWhenMentioned = true,
+        SpontaneousMessages = false,
+
+        IgnoreOwnMessages = true,
+        IgnoreDuplicates = true,
+
+        MaximumMessageLength = 180,
+    },
+
+    -- AUTOMATIC RESPONSES
+    AutomaticResponses = {
+        Enabled = true,
+
+        Greetings = true,
+        IdentityQuestions = true,
+        BasicQuestions = true,
+    },
+
+    -- COOLDOWN
+    Cooldown = {
+        Enabled = true,
+
+        Duration = 10,
+
+        StartOnQuestionReceived = true,
+
+        BlockedQuestionsRestartTimer = false,
+
+        WaitMessage =
+            "Por favor, espere! Não consigo responder tão rápido. Aguarde mais %s segundos para que eu possa falar novamente.",
+    },
+
+    -- RESEARCH
+    Research = {
+        Enabled = true,
+
+        AnnounceBeforeSearching = true,
+
+        MaximumSources = 5,
+
+        PreferOfficialSources = true,
+
+        ShowSources = true,
+    },
+
+    -- PERCEPTION
+    Perception = {
+        Enabled = true,
+
+        ObservePlayers = true,
+        ObserveObjects = true,
+        ObserveStructures = true,
+        ObserveDisasters = true,
+
+        ObserveOwnCharacter = true,
+
+        UpdateInterval = 1,
+        ObservationRadius = 150,
+    },
+
+    -- MOVEMENT
+    Movement = {
+        Enabled = true,
+
+        WalkSpeed = 16,
+        JumpPower = 50,
+
+        AutonomousMovement = true,
+    },
+
+    -- MEMORY
+    Memory = {
+        Enabled = true,
+
+        RememberPlayers = true,
+        RememberConversations = true,
+        RememberExperiences = true,
+
+        MaximumEntries = 100,
+    },
+
+    -- SECURITY
+    Security = {
+        Enabled = true,
+
+        IgnoreOwnMessages = true,
+        FilterCommands = true,
+
+        ProtectAPIKey = true,
+    },
+
+    -- DEBUG
+    Debug = {
+        Enabled = true,
+
+        MaximumLogs = 300,
+
+        ShowAPIEvents = true,
+        ShowChatEvents = true,
+        ShowPerceptionEvents = true,
+    },
+}
+
+--==============================================================
+-- INTERNAL STATE
+--==============================================================
+
+COS.State = {
+
+    Initialized = false,
+
+    Running = true,
+
+    Connected = false,
+
+    APIAvailable = false,
+
+    IsResearching = false,
+
+    IsResponding = false,
+
+    IsOnCooldown = false,
+
+    CooldownEndsAt = 0,
+
+    CurrentCharacter = nil,
+
+    CurrentHumanoid = nil,
+
+    CurrentRootPart = nil,
+
+    LastQuestion = nil,
+
+    LastResponse = nil,
+
+    LastMessageId = nil,
+
+    LastUpdate = 0,
+
+    CurrentDisaster = nil,
+
+    CurrentRound = 0,
+
+    MessagesReceived = 0,
+
+    MessagesSent = 0,
+
+    QuestionsReceived = 0,
+
+    QuestionsAnswered = 0,
+
+    ResearchesPerformed = 0,
+
+    Errors = 0,
+}
+
+--==============================================================
+-- INTERNAL DATA
+--==============================================================
+
+COS.Data = {
+
+    Logs = {},
+
+    Players = {},
+
+    Objects = {},
+
+    Structures = {},
+
+    Conversations = {},
+
+    Experiences = {},
+
+    ProcessedMessages = {},
+
+    AutomaticResponsePatterns = {},
+
+}
+
+--==============================================================
+-- CONNECTION STORAGE
+--==============================================================
+
+COS.Connections = {}
+
+function COS:AddConnection(Connection)
+
+    if Connection then
+        table.insert(self.Connections, Connection)
+    end
+
+    return Connection
+end
+
+function COS:DisconnectAll()
+
+    for _, Connection in ipairs(self.Connections) do
+
+        pcall(function()
+            Connection:Disconnect()
+        end)
+
+    end
+
+    table.clear(self.Connections)
+end
+
+--==============================================================
+-- UTILITY FUNCTIONS
+--==============================================================
+
+function COS:Now()
+
+    return os.clock()
+end
+
+function COS:FormatTime(Seconds)
+
+    return string.format("%.1f", Seconds)
+end
+
+function COS:Trim(Text)
+
+    if typeof(Text) ~= "string" then
+        return ""
+    end
+
+    return Text:match("^%s*(.-)%s*$") or ""
+end
+
+function COS:Normalize(Text)
+
+    Text = self:Trim(Text)
+
+    return string.lower(Text)
+end
+
+function COS:SafeCall(Function, ...)
+
+    local Arguments = {...}
+
+    local Success, Result = pcall(function()
+
+        return Function(unpack(Arguments))
+
+    end)
+
+    if not Success then
+
+        self:Log(
+            "ERROR",
+            tostring(Result)
+        )
+
+        return false, Result
+    end
+
+    return true, Result
+end
+
+--==============================================================
+-- LOG SYSTEM
+--==============================================================
+
+function COS:Log(Category, Message)
+
+    if not self.Config.Debug.Enabled then
+        return
+    end
+
+    local Entry = {
+
+        Category = tostring(Category),
+
+        Message = tostring(Message),
+
+        Timestamp = os.date("%H:%M:%S"),
+
+        Clock = self:Now(),
+
+    }
+
+    table.insert(self.Data.Logs, Entry)
+
+    while #self.Data.Logs >
+        self.Config.Debug.MaximumLogs do
+
+        table.remove(self.Data.Logs, 1)
+
+    end
+
+    if self.Config.General.DebugMode then
+
+        print(string.format(
+            "[COS][%s] %s",
+            Entry.Category,
+            Entry.Message
+        ))
+
+    end
+
+end
+
+--==============================================================
+-- CHARACTER MANAGEMENT
+--==============================================================
+
+function COS:UpdateCharacter()
+
+    local Character = LocalPlayer.Character
+
+    if not Character then
+
+        self.State.CurrentCharacter = nil
+        self.State.CurrentHumanoid = nil
+        self.State.CurrentRootPart = nil
+
+        return false
+    end
+
+    local Humanoid =
+        Character:FindFirstChildOfClass("Humanoid")
+
+    local RootPart =
+        Character:FindFirstChild("HumanoidRootPart")
+
+    self.State.CurrentCharacter = Character
+    self.State.CurrentHumanoid = Humanoid
+    self.State.CurrentRootPart = RootPart
+
+    return Humanoid ~= nil and RootPart ~= nil
+end
+
+function COS:GetCharacter()
+
+    return self.State.CurrentCharacter
+end
+
+function COS:GetHumanoid()
+
+    return self.State.CurrentHumanoid
+end
+
+function COS:GetRootPart()
+
+    return self.State.CurrentRootPart
+end
+
+--==============================================================
+-- PLAYER INFORMATION
+--==============================================================
+
+function COS:GetPlayerInformation(Player)
+
+    if not Player then
+        return nil
+    end
+
+    return {
+
+        Name = Player.Name,
+
+        DisplayName = Player.DisplayName,
+
+        UserId = Player.UserId,
+
+        IsLocalPlayer = Player == LocalPlayer,
+
+    }
+end
+
+--==============================================================
+-- MEMORY STORAGE
+--==============================================================
+
+function COS:AddMemory(Category, Information)
+
+    if not self.Config.Memory.Enabled then
+        return
+    end
+
+    local Entry = {
+
+        Category = tostring(Category),
+
+        Information = Information,
+
+        Timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+
+        Clock = self:Now(),
+
+    }
+
+    table.insert(self.Data.Experiences, Entry)
+
+    while #self.Data.Experiences >
+        self.Config.Memory.MaximumEntries do
+
+        table.remove(self.Data.Experiences, 1)
+
+    end
+
+end
+
+--==============================================================
+-- MESSAGE DUPLICATION CONTROL
+--==============================================================
+
+function COS:HasProcessedMessage(MessageId)
+
+    if not MessageId then
+        return false
+    end
+
+    return self.Data.ProcessedMessages[
+        tostring(MessageId)
+    ] == true
+
+end
+
+function COS:MarkMessageProcessed(MessageId)
+
+    if not MessageId then
+        return
+    end
+
+    self.Data.ProcessedMessages[
+        tostring(MessageId)
+    ] = true
+
+end
+
+--==============================================================
+-- COOLDOWN FOUNDATION
+--==============================================================
+
+function COS:GetRemainingCooldown()
+
+    if not self.Config.Cooldown.Enabled then
+        return 0
+    end
+
+    return math.max(
+        0,
+        self.State.CooldownEndsAt - self:Now()
+    )
+
+end
+
+function COS:IsCoolingDown()
+
+    return self:GetRemainingCooldown() > 0
+
+end
+
+function COS:StartCooldown()
+
+    if not self.Config.Cooldown.Enabled then
+        return
+    end
+
+    self.State.CooldownEndsAt =
+        self:Now() + self.Config.Cooldown.Duration
+
+    self.State.IsOnCooldown = true
+
+    self:Log(
+        "COOLDOWN",
+        "Cooldown iniciado."
+    )
+
+end
+
+function COS:UpdateCooldown()
+
+    local Remaining = self:GetRemainingCooldown()
+
+    self.State.IsOnCooldown = Remaining > 0
+
+    return Remaining
+
+end
+
+--==============================================================
+-- BASIC STATUS
+--==============================================================
+
+function COS:GetStatus()
+
+    return {
+
+        Name = self.Name,
+
+        Version = self.Version,
+
+        Running = self.State.Running,
+
+        Connected = self.State.Connected,
+
+        APIAvailable = self.State.APIAvailable,
+
+        IsResearching = self.State.IsResearching,
+
+        IsResponding = self.State.IsResponding,
+
+        IsOnCooldown = self:IsCoolingDown(),
+
+    }
+
+end
+
+--==============================================================
+-- INITIALIZATION
+--==============================================================
+
+function COS:Initialize()
+
+    if self.State.Initialized then
+        return
+    end
+
+    self:Log(
+        "SYSTEM",
+        "Inicializando COS..."
+    )
+
+    self:UpdateCharacter()
+
+    self:AddConnection(
+        LocalPlayer.CharacterAdded:Connect(function()
+
+            task.wait(0.5)
+
+            self:UpdateCharacter()
+
+            self:Log(
+                "CHARACTER",
+                "Personagem atualizado."
+            )
+
+        end)
+    )
+
+    self:AddConnection(
+        LocalPlayer.CharacterRemoving:Connect(function()
+
+            self.State.CurrentCharacter = nil
+            self.State.CurrentHumanoid = nil
+            self.State.CurrentRootPart = nil
+
+        end)
+    )
+
+    self.State.Initialized = true
+
+    self:Log(
+        "SYSTEM",
+        "Estrutura principal carregada."
+    )
+
+end
+
+--==============================================================
+-- START
+--==============================================================
+
+COS:Initialize()
+
+_G.COS = COS
+
+print("================================")
+print(" COS — CHATGPTOSS")
+print(" Versão:", COS.Version)
+print(" Fundação carregada.")
+print("================================")
+
+--==============================================================
+-- FIM DA PARTE 1/8
+-- A PRÓXIMA PARTE DEVE SER INTEGRADA ABAIXO.
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 2/8
+-- INTERFACE PRINCIPAL
+--==============================================================
+
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+--==============================================================
+-- THEME
+--==============================================================
+
+local Theme = {
+    Background = Color3.fromRGB(13,16,23),
+    Panel = Color3.fromRGB(22,27,38),
+    Secondary = Color3.fromRGB(31,38,52),
+    Accent = Color3.fromRGB(85,130,255),
+    Text = Color3.fromRGB(240,243,250),
+    SubText = Color3.fromRGB(150,162,182),
+    Green = Color3.fromRGB(70,210,140),
+    Red = Color3.fromRGB(235,85,100),
+}
+
+--==============================================================
+-- SCREEN GUI
+--==============================================================
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "COS_ControlCenter"
+Gui.ResetOnSpawn = false
+Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Gui.Parent = PlayerGui
+
+local function New(class, parent, properties)
+    local obj = Instance.new(class)
+
+    for property, value in pairs(properties or {}) do
+        obj[property] = value
+    end
+
+    obj.Parent = parent
+    return obj
+end
+
+local function Corner(obj, radius)
+    New("UICorner", obj, {
+        CornerRadius = UDim.new(0, radius or 8)
+    })
+end
+
+local function Label(parent, text, size, color)
+    return New("TextLabel", parent, {
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = color or Theme.Text,
+        TextSize = size or 12,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+    })
+end
+
+local function Button(parent, text, size)
+    local b = New("TextButton", parent, {
+        Size = size or UDim2.new(1,0,0,35),
+        BackgroundColor3 = Theme.Secondary,
+        Text = text,
+        TextColor3 = Theme.Text,
+        TextSize = 11,
+        Font = Enum.Font.GothamSemibold,
+        AutoButtonColor = true,
+    })
+
+    Corner(b, 7)
+    return b
+end
+
+--==============================================================
+-- MAIN WINDOW
+--==============================================================
+
+local Main = New("Frame", Gui, {
+    Name = "Main",
+    Size = UDim2.fromOffset(330,430),
+    Position = UDim2.new(0.5,-165,0.5,-215),
+    BackgroundColor3 = Theme.Background,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+})
+
+Corner(Main, 12)
+
+New("UIStroke", Main, {
+    Color = Color3.fromRGB(55,65,85),
+    Thickness = 1,
+})
+
+--==============================================================
+-- TITLE BAR
+--==============================================================
+
+local Header = New("Frame", Main, {
+    Size = UDim2.new(1,0,0,45),
+    BackgroundColor3 = Theme.Panel,
+    BorderSizePixel = 0,
+})
+
+local Title = Label(Header, "◈  COS CONTROL CENTER", 13)
+Title.Position = UDim2.fromOffset(12,0)
+Title.Size = UDim2.new(1,-90,1,0)
+Title.Font = Enum.Font.GothamBold
+
+local Minimize = Button(
+    Header,
+    "—",
+    UDim2.fromOffset(32,28)
+)
+
+Minimize.Position = UDim2.new(1,-40,0,8)
+
+--==============================================================
+-- STATUS
+--==============================================================
+
+local Status = New("Frame", Main, {
+    Position = UDim2.fromOffset(10,52),
+    Size = UDim2.new(1,-20,0,30),
+    BackgroundColor3 = Theme.Secondary,
+})
+
+Corner(Status, 7)
+
+local StatusLabel = Label(Status, "●  COS ONLINE", 10, Theme.Green)
+StatusLabel.Position = UDim2.fromOffset(10,0)
+StatusLabel.Size = UDim2.new(0.6,0,1,0)
+
+local ModeLabel = Label(Status, "AUTÔNOMO", 9, Theme.Accent)
+ModeLabel.Position = UDim2.new(0.6,0,0,0)
+ModeLabel.Size = UDim2.new(0.35,0,1,0)
+ModeLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+--==============================================================
+-- TAB BAR
+--==============================================================
+
+local TabScroll = New("ScrollingFrame", Main, {
+    Position = UDim2.fromOffset(10,91),
+    Size = UDim2.new(1,-20,0,35),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 2,
+    ScrollBarImageColor3 = Theme.Accent,
+    CanvasSize = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize = Enum.AutomaticSize.X,
+})
+
+local TabLayout = New("UIListLayout", TabScroll, {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0,5),
+})
+
+--==============================================================
+-- CONTENT
+--==============================================================
+
+local Content = New("Frame", Main, {
+    Position = UDim2.fromOffset(10,133),
+    Size = UDim2.new(1,-20,1,-143),
+    BackgroundTransparency = 1,
+    ClipsDescendants = true,
+})
+
+local TabNames = {
+    "Geral",
+    "IA",
+    "Percepção",
+    "Movimento",
+    "Social",
+    "Pesquisa",
+    "Memória",
+    "Cooldown",
+    "Segurança",
+    "Debug",
+    "Estatísticas",
+}
+
+local Pages = {}
+local TabButtons = {}
+local SelectedTab
+
+for _, name in ipairs(TabNames) do
+
+    local page = New("ScrollingFrame", Content, {
+        Name = name,
+        Size = UDim2.fromScale(1,1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Theme.Accent,
+        CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false,
+    })
+
+    New("UIListLayout", page, {
+        Padding = UDim.new(0,7),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    New("UIPadding", page, {
+        PaddingTop = UDim.new(0,5),
+        PaddingBottom = UDim.new(0,10),
+        PaddingLeft = UDim.new(0,3),
+        PaddingRight = UDim.new(0,3),
+    })
+
+    Pages[name] = page
+
+    local tab = Button(
+        TabScroll,
+        name,
+        UDim2.fromOffset(85,29)
+    )
+
+    tab.TextSize = 10
+    TabButtons[name] = tab
+
+    tab.MouseButton1Click:Connect(function()
+
+        for tabName, otherPage in pairs(Pages) do
+            otherPage.Visible = tabName == name
+
+            TabButtons[tabName].BackgroundColor3 =
+                tabName == name and Theme.Accent
+                or Theme.Secondary
+        end
+
+        SelectedTab = name
+    end)
+end
+
+--==============================================================
+-- UI COMPONENT HELPERS
+--==============================================================
+
+local function Section(tab, text)
+    local obj = Label(Pages[tab], text, 12, Theme.Accent)
+    obj.Size = UDim2.new(1,-5,0,27)
+    obj.Font = Enum.Font.GothamBold
+    return obj
+end
+
+local function Info(tab, text)
+    local obj = Label(Pages[tab], text, 11, Theme.SubText)
+    obj.Size = UDim2.new(1,-5,0,35)
+    obj.TextWrapped = true
+    return obj
+end
+
+local function Toggle(tab, text, initial, callback)
+
+    local holder = New("Frame", Pages[tab], {
+        Size = UDim2.new(1,-5,0,39),
+        BackgroundColor3 = Theme.Panel,
+    })
+
+    Corner(holder,7)
+
+    local name = Label(holder,text,11)
+    name.Position = UDim2.fromOffset(9,0)
+    name.Size = UDim2.new(1,-75,1,0)
+
+    local enabled = initial
+
+    local switch = Button(
+        holder,
+        enabled and "ON" or "OFF",
+        UDim2.fromOffset(48,25)
+    )
+
+    switch.Position = UDim2.new(1,-55,0,7)
+
+    local function refresh()
+        switch.Text = enabled and "ON" or "OFF"
+        switch.BackgroundColor3 =
+            enabled and Theme.Accent or Theme.Secondary
+    end
+
+    switch.MouseButton1Click:Connect(function()
+        enabled = not enabled
+        refresh()
+
+        if callback then
+            callback(enabled)
+        end
+    end)
+
+    refresh()
+
+    return function()
+        return enabled
+    end
+end
+
+--==============================================================
+-- INITIAL TAB CONTENT
+--==============================================================
+
+Section("Geral","CONFIGURAÇÕES GERAIS")
+
+Info("Geral","Painel principal de controle do COS.")
+
+Toggle(
+    "Geral",
+    "Modo autônomo",
+    COS.Config.General.AutonomousMode,
+    function(value)
+        COS.Config.General.AutonomousMode = value
+    end
+)
+
+Toggle(
+    "Geral",
+    "Modo de depuração",
+    COS.Config.General.DebugMode,
+    function(value)
+        COS.Config.General.DebugMode = value
+    end
+)
+
+Section("IA","INTELIGÊNCIA ARTIFICIAL")
+Info("IA","Configurações do modelo serão adicionadas na integração da API.")
+
+Section("Percepção","OBSERVAÇÃO")
+Info("Percepção","Controle dos dados do ambiente que o COS poderá observar.")
+
+Section("Movimento","MOVIMENTAÇÃO")
+Info("Movimento","Configurações de movimentação e sobrevivência.")
+
+Section("Social","INTERAÇÃO SOCIAL")
+Info("Social","Leitura de mensagens, respostas e participação.")
+
+Section("Pesquisa","PESQUISA EXTERNA")
+Info("Pesquisa","Pesquisas, fontes e informações atualizadas.")
+
+Section("Memória","MEMÓRIA")
+Info("Memória","Histórico e experiências da sessão.")
+
+Section("Cooldown","COOLDOWN GLOBAL")
+Info("Cooldown","Intervalo entre respostas do COS.")
+
+Section("Segurança","SEGURANÇA")
+Info("Segurança","Proteção de configurações e filtros.")
+
+Section("Debug","CONSOLE INTERNO")
+Info("Debug","Eventos e erros serão exibidos aqui.")
+
+Section("Estatísticas","ESTATÍSTICAS")
+Info("Estatísticas","Métricas da sessão serão exibidas aqui.")
+
+--==============================================================
+-- MINIMIZE / REOPEN
+--==============================================================
+
+local Reopen = Button(
+    Gui,
+    "◈ COS",
+    UDim2.fromOffset(85,38)
+)
+
+Reopen.Position = UDim2.new(0,12,0.5,0)
+Reopen.BackgroundColor3 = Theme.Accent
+Reopen.Visible = false
+
+Minimize.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    Reopen.Visible = true
+end)
+
+Reopen.MouseButton1Click:Connect(function()
+    Main.Visible = true
+    Reopen.Visible = false
+end)
+
+--==============================================================
+-- DRAG — TOUCH AND MOUSE
+--==============================================================
+
+local dragging = false
+local dragStart
+local startPosition
+
+Header.InputBegan:Connect(function(input)
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = Main.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+
+    if not dragging then return end
+
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        local delta = input.Position - dragStart
+
+        Main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = false
+    end
+end)
+
+--==============================================================
+-- RESPONSIVE SIZE
+--==============================================================
+
+local function UpdateSize()
+
+    local camera = Workspace.CurrentCamera
+    if not camera then return end
+
+    local viewport = camera.ViewportSize
+
+    local width = math.min(330, viewport.X - 24)
+    local height = math.min(430, viewport.Y - 40)
+
+    Main.Size = UDim2.fromOffset(
+        math.max(width,250),
+        math.max(height,300)
+    )
+end
+
+UpdateSize()
+
+--==============================================================
+-- REGISTER UI
+--==============================================================
+
+COS.UI = {
+    ScreenGui = Gui,
+    Main = Main,
+    ReopenButton = Reopen,
+    Pages = Pages,
+    Tabs = TabButtons,
+    Theme = Theme,
+
+    Section = Section,
+    Info = Info,
+    Toggle = Toggle,
+    Button = Button,
+    Label = Label,
+}
+
+TabButtons["Geral"].MouseButton1Click:Connect(function()
+    Pages["Geral"].Visible = true
+end)
+
+TabButtons["Geral"].BackgroundColor3 = Theme.Accent
+Pages["Geral"].Visible = true
+SelectedTab = "Geral"
+
+COS:Log("UI","Interface principal carregada.")
+
+print("[COS] Parte 2 carregada.")
+
+--==============================================================
+-- FIM DA PARTE 2/8
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 3/8
+-- CONFIGURAÇÃO DA INTELIGÊNCIA ARTIFICIAL
+--==============================================================
+
+local UI = COS.UI
+local Page = UI.Pages["IA"]
+local Theme = UI.Theme
+
+--==============================================================
+-- HELPERS
+--==============================================================
+
+local function CreateField(title, initialValue, placeholder)
+
+    local Holder = Instance.new("Frame")
+    Holder.Name = "Field_" .. title
+    Holder.Size = UDim2.new(1,-5,0,62)
+    Holder.BackgroundColor3 = Theme.Panel
+    Holder.BorderSizePixel = 0
+    Holder.Parent = Page
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0,7)
+    Corner.Parent = Holder
+
+    local Caption = UI.Label(
+        Holder,
+        title,
+        10,
+        Theme.SubText
+    )
+
+    Caption.Position = UDim2.fromOffset(9,3)
+    Caption.Size = UDim2.new(1,-18,0,20)
+
+    local Input = Instance.new("TextBox")
+    Input.Size = UDim2.new(1,-18,0,29)
+    Input.Position = UDim2.fromOffset(9,27)
+    Input.BackgroundColor3 = Theme.Secondary
+    Input.BorderSizePixel = 0
+    Input.Text = tostring(initialValue or "")
+    Input.PlaceholderText = placeholder or ""
+    Input.PlaceholderColor3 = Theme.SubText
+    Input.TextColor3 = Theme.Text
+    Input.TextSize = 11
+    Input.Font = Enum.Font.Gotham
+    Input.ClearTextOnFocus = false
+    Input.TextXAlignment = Enum.TextXAlignment.Left
+    Input.Parent = Holder
+
+    local InputCorner = Instance.new("UICorner")
+    InputCorner.CornerRadius = UDim.new(0,5)
+    InputCorner.Parent = Input
+
+    local Padding = Instance.new("UIPadding")
+    Padding.PaddingLeft = UDim.new(0,7)
+    Padding.PaddingRight = UDim.new(0,7)
+    Padding.Parent = Input
+
+    return Input
+end
+
+local function CreateStatus(text, color)
+
+    local Holder = Instance.new("Frame")
+    Holder.Size = UDim2.new(1,-5,0,38)
+    Holder.BackgroundColor3 = Theme.Panel
+    Holder.BorderSizePixel = 0
+    Holder.Parent = Page
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0,7)
+    Corner.Parent = Holder
+
+    local Indicator = Instance.new("Frame")
+    Indicator.Size = UDim2.fromOffset(8,8)
+    Indicator.Position = UDim2.fromOffset(10,15)
+    Indicator.BackgroundColor3 = color
+    Indicator.BorderSizePixel = 0
+    Indicator.Parent = Holder
+
+    local IndicatorCorner = Instance.new("UICorner")
+    IndicatorCorner.CornerRadius = UDim.new(1,0)
+    IndicatorCorner.Parent = Indicator
+
+    local Text = UI.Label(
+        Holder,
+        text,
+        10,
+        Theme.Text
+    )
+
+    Text.Position = UDim2.fromOffset(25,0)
+    Text.Size = UDim2.new(1,-32,1,0)
+
+    return Text, Indicator
+end
+
+--==============================================================
+-- PROVIDER
+--==============================================================
+
+UI.Section("IA","PROVEDOR DE INTELIGÊNCIA")
+
+UI.Info(
+    "IA",
+    "Configure um serviço intermediário autorizado para conectar o COS ao modelo."
+)
+
+local ProviderInput = CreateField(
+    "Provedor",
+    COS.Config.AI.Provider,
+    "Ex.: Custom"
+)
+
+ProviderInput.FocusLost:Connect(function()
+
+    local Value = COS:Trim(ProviderInput.Text)
+
+    if Value ~= "" then
+        COS.Config.AI.Provider = Value
+        COS:Log("AI","Provedor atualizado.")
+    end
+
+end)
+
+--==============================================================
+-- SERVICE URL
+--==============================================================
+
+UI.Section("IA","SERVIÇO DE CONEXÃO")
+
+local URLInput = CreateField(
+    "Endereço do seu servidor",
+    COS.Config.AI.BaseURL,
+    "https://seu-servidor.com"
+)
+
+URLInput.FocusLost:Connect(function()
+
+    local Value = COS:Trim(URLInput.Text)
+
+    COS.Config.AI.BaseURL = Value
+
+    COS.State.Connected = false
+    COS.State.APIAvailable = false
+
+    COS:Log(
+        "AI",
+        "Endereço do serviço atualizado."
+    )
+
+end)
+
+UI.Info(
+    "IA",
+    "A chave secreta da API deve permanecer no servidor intermediário. Não coloque sua chave neste campo."
+)
+
+--==============================================================
+-- MODEL
+--==============================================================
+
+UI.Section("IA","MODELO")
+
+local ModelInput = CreateField(
+    "Modelo de IA",
+    COS.Config.AI.Model,
+    "openai/gpt-oss-20b"
+)
+
+ModelInput.FocusLost:Connect(function()
+
+    local Value = COS:Trim(ModelInput.Text)
+
+    if Value ~= "" then
+
+        COS.Config.AI.Model = Value
+
+        COS:Log(
+            "AI",
+            "Modelo atualizado: " .. Value
+        )
+
+    end
+
+end)
+
+--==============================================================
+-- GENERATION SETTINGS
+--==============================================================
+
+UI.Section("IA","PARÂMETROS DE GERAÇÃO")
+
+local TokensInput = CreateField(
+    "Máximo de tokens",
+    COS.Config.AI.MaxTokens,
+    "250"
+)
+
+TokensInput.FocusLost:Connect(function()
+
+    local Value = tonumber(TokensInput.Text)
+
+    if Value then
+
+        Value = math.clamp(
+            math.floor(Value),
+            50,
+            2000
+        )
+
+        COS.Config.AI.MaxTokens = Value
+        TokensInput.Text = tostring(Value)
+
+    else
+
+        TokensInput.Text =
+            tostring(COS.Config.AI.MaxTokens)
+
+    end
+
+end)
+
+local TemperatureInput = CreateField(
+    "Temperatura",
+    COS.Config.AI.Temperature,
+    "0.7"
+)
+
+TemperatureInput.FocusLost:Connect(function()
+
+    local Value = tonumber(TemperatureInput.Text)
+
+    if Value then
+
+        Value = math.clamp(Value,0,2)
+
+        COS.Config.AI.Temperature = Value
+        TemperatureInput.Text = tostring(Value)
+
+    else
+
+        TemperatureInput.Text =
+            tostring(COS.Config.AI.Temperature)
+
+    end
+
+end)
+
+local TimeoutInput = CreateField(
+    "Tempo limite (segundos)",
+    COS.Config.AI.Timeout,
+    "20"
+)
+
+TimeoutInput.FocusLost:Connect(function()
+
+    local Value = tonumber(TimeoutInput.Text)
+
+    if Value then
+
+        Value = math.clamp(
+            math.floor(Value),
+            5,
+            120
+        )
+
+        COS.Config.AI.Timeout = Value
+        TimeoutInput.Text = tostring(Value)
+
+    else
+
+        TimeoutInput.Text =
+            tostring(COS.Config.AI.Timeout)
+
+    end
+
+end)
+
+--==============================================================
+-- CONNECTION STATUS
+--==============================================================
+
+UI.Section("IA","ESTADO DA CONEXÃO")
+
+local StatusText, StatusIndicator = CreateStatus(
+    "Aguardando configuração do serviço.",
+    Theme.SubText
+)
+
+local function UpdateAIStatus()
+
+    if COS.State.APIAvailable then
+
+        StatusText.Text = "IA disponível."
+        StatusIndicator.BackgroundColor3 = Theme.Green
+
+    elseif COS.State.Connected then
+
+        StatusText.Text = "Serviço conectado."
+        StatusIndicator.BackgroundColor3 = Theme.Accent
+
+    else
+
+        StatusText.Text = "Não conectado."
+        StatusIndicator.BackgroundColor3 = Theme.Red
+
+    end
+
+end
+
+--==============================================================
+-- CONNECTION VALIDATION
+--==============================================================
+
+local TestButton = UI.Button(
+    "IA",
+    "VERIFICAR CONFIGURAÇÃO",
+    UDim2.new(1,-5,0,36)
+)
+
+TestButton.MouseButton1Click:Connect(function()
+
+    local URL = COS:Trim(COS.Config.AI.BaseURL)
+
+    if URL == "" then
+
+        StatusText.Text = "Configure o endereço do serviço."
+        StatusIndicator.BackgroundColor3 = Theme.Red
+
+        COS:Log(
+            "AI",
+            "Verificação cancelada: endereço vazio."
+        )
+
+        return
+    end
+
+    if not URL:match("^https://") then
+
+        StatusText.Text = "O endereço precisa usar HTTPS."
+        StatusIndicator.BackgroundColor3 = Theme.Red
+
+        COS:Log(
+            "AI",
+            "Endereço inválido: HTTPS obrigatório."
+        )
+
+        return
+    end
+
+    COS.State.Connected = false
+    COS.State.APIAvailable = false
+
+    StatusText.Text =
+        "Configuração preenchida. Integração pendente."
+
+    StatusIndicator.BackgroundColor3 = Theme.Accent
+
+    COS:Log(
+        "AI",
+        "Configuração validada localmente. Nenhuma requisição foi enviada."
+    )
+
+end)
+
+--==============================================================
+-- SYSTEM PROMPT
+--==============================================================
+
+UI.Section("IA","PERSONALIDADE")
+
+local PromptHolder = Instance.new("Frame")
+PromptHolder.Size = UDim2.new(1,-5,0,125)
+PromptHolder.BackgroundColor3 = Theme.Panel
+PromptHolder.BorderSizePixel = 0
+PromptHolder.Parent = Page
+
+local PromptCorner = Instance.new("UICorner")
+PromptCorner.CornerRadius = UDim.new(0,7)
+PromptCorner.Parent = PromptHolder
+
+local PromptInput = Instance.new("TextBox")
+PromptInput.Size = UDim2.new(1,-16,1,-16)
+PromptInput.Position = UDim2.fromOffset(8,8)
+PromptInput.BackgroundColor3 = Theme.Secondary
+PromptInput.BorderSizePixel = 0
+PromptInput.TextColor3 = Theme.Text
+PromptInput.TextSize = 11
+PromptInput.Font = Enum.Font.Gotham
+PromptInput.TextWrapped = true
+PromptInput.TextXAlignment = Enum.TextXAlignment.Left
+PromptInput.TextYAlignment = Enum.TextYAlignment.Top
+PromptInput.MultiLine = true
+PromptInput.ClearTextOnFocus = false
+PromptInput.Text = COS.Config.AI.SystemPrompt
+PromptInput.Parent = PromptHolder
+
+local PromptPadding = Instance.new("UIPadding")
+PromptPadding.PaddingTop = UDim.new(0,7)
+PromptPadding.PaddingLeft = UDim.new(0,7)
+PromptPadding.PaddingRight = UDim.new(0,7)
+PromptPadding.Parent = PromptInput
+
+PromptInput.FocusLost:Connect(function()
+
+    COS.Config.AI.SystemPrompt = PromptInput.Text
+
+    COS:Log(
+        "AI",
+        "Personalidade atualizada."
+    )
+
+end)
+
+--==============================================================
+-- FINALIZATION
+--==============================================================
+
+UpdateAIStatus()
+
+COS.UI.AI = {
+    ProviderInput = ProviderInput,
+    URLInput = URLInput,
+    ModelInput = ModelInput,
+
+    TokensInput = TokensInput,
+    TemperatureInput = TemperatureInput,
+    TimeoutInput = TimeoutInput,
+
+    PromptInput = PromptInput,
+
+    StatusText = StatusText,
+    StatusIndicator = StatusIndicator,
+
+    TestButton = TestButton,
+    UpdateStatus = UpdateAIStatus,
+}
+
+COS:Log(
+    "AI",
+    "Painel de configuração da IA carregado."
+)
+
+print("[COS] Parte 3 carregada.")
+
+--==============================================================
+-- FIM DA PARTE 3/8
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 4/8
+-- COMUNICAÇÃO COM A INTELIGÊNCIA ARTIFICIAL
+--==============================================================
+
+local ReplicatedStorage =
+    game:GetService("ReplicatedStorage")
+
+--==============================================================
+-- CONFIGURATION
+--==============================================================
+
+COS.AI = COS.AI or {}
+
+COS.AI.RemoteName = "COS_AI_Request"
+COS.AI.MaximumPromptLength = 4000
+COS.AI.MaximumContextLength = 4000
+
+--==============================================================
+-- ERROR HANDLING
+--==============================================================
+
+function COS:AIErrorMessage()
+
+    return "Perdões, eu ainda estou sendo configurado/minha API de IA teve alguma falha, tente novamente"
+
+end
+
+function COS:AIError(Category, Details)
+
+    self.State.Errors += 1
+    self.State.APIAvailable = false
+    self.State.Connected = false
+
+    self:Log(
+        "AI_ERROR",
+        tostring(Category) .. ": " .. tostring(Details)
+    )
+
+    return self:AIErrorMessage()
+
+end
+
+--==============================================================
+-- REMOTE VALIDATION
+--==============================================================
+
+function COS:GetAIRemote()
+
+    local Remote =
+        ReplicatedStorage:FindFirstChild(
+            self.AI.RemoteName
+        )
+
+    if not Remote then
+        return nil, "RemoteFunction não encontrado."
+    end
+
+    if not Remote:IsA("RemoteFunction") then
+        return nil, "O objeto encontrado não é RemoteFunction."
+    end
+
+    return Remote
+end
+
+--==============================================================
+-- REQUEST VALIDATION
+--==============================================================
+
+function COS:ValidateAIRequest(Message)
+
+    if not self.Config.General.Enabled then
+        return false, "COS desativado."
+    end
+
+    if not self.Config.AI.BaseURL:match("^https://") then
+        return false, "Endereço HTTPS não configurado."
+    end
+
+    if typeof(Message) ~= "string" then
+        return false, "Mensagem inválida."
+    end
+
+    Message = self:Trim(Message)
+
+    if Message == "" then
+        return false, "Mensagem vazia."
+    end
+
+    if #Message > self.AI.MaximumPromptLength then
+        return false, "Mensagem muito longa."
+    end
+
+    if self.State.IsResponding then
+        return false, "O COS já está respondendo."
+    end
+
+    return true
+end
+
+--==============================================================
+-- REQUEST BUILDER
+--==============================================================
+
+function COS:BuildAIRequest(Message, Context)
+
+    local SafeContext = ""
+
+    if typeof(Context) == "string" then
+
+        SafeContext = string.sub(
+            Context,
+            1,
+            self.AI.MaximumContextLength
+        )
+
+    end
+
+    return {
+
+        RequestId = HttpService:GenerateGUID(false),
+
+        Message = Message,
+
+        Context = SafeContext,
+
+        Model = self.Config.AI.Model,
+
+        Parameters = {
+
+            MaxTokens = self.Config.AI.MaxTokens,
+
+            Temperature = self.Config.AI.Temperature,
+
+        },
+
+        Language = self.Config.General.Language,
+
+    }
+
+end
+
+--==============================================================
+-- RESPONSE VALIDATION
+--==============================================================
+
+function COS:ValidateAIResponse(Response)
+
+    if typeof(Response) ~= "table" then
+        return false, "Resposta inválida do servidor."
+    end
+
+    if Response.success ~= true then
+
+        return false,
+            tostring(Response.error or "Falha desconhecida.")
+
+    end
+
+    if typeof(Response.text) ~= "string" then
+        return false, "O servidor não retornou texto."
+    end
+
+    local Text = self:Trim(Response.text)
+
+    if Text == "" then
+        return false, "A resposta da IA está vazia."
+    end
+
+    return true, Text
+end
+
+--==============================================================
+-- MAIN AI REQUEST
+--==============================================================
+
+function COS:RequestAI(Message, Context)
+
+    local Valid, ValidationError =
+        self:ValidateAIRequest(Message)
+
+    if not Valid then
+
+        self:Log(
+            "AI",
+            "Solicitação recusada: " .. ValidationError
+        )
+
+        return nil, ValidationError
+    end
+
+    local Remote, RemoteError = self:GetAIRemote()
+
+    if not Remote then
+
+        self:AIError(
+            "CONNECTION",
+            RemoteError
+        )
+
+        return nil, self:AIErrorMessage()
+    end
+
+    local Payload = self:BuildAIRequest(
+        self:Trim(Message),
+        Context
+    )
+
+    self.State.IsResponding = true
+
+    self.State.LastQuestion = Message
+
+    self:Log(
+        "AI",
+        "Enviando solicitação ao serviço autorizado."
+    )
+
+    --==========================================================
+    -- ASYNC REQUEST
+    --==========================================================
+
+    local Finished = false
+    local Success = false
+    local Result = nil
+
+    task.spawn(function()
+
+        Success, Result = pcall(function()
+
+            return Remote:InvokeServer(Payload)
+
+        end)
+
+        Finished = true
+
+    end)
+
+    --==========================================================
+    -- TIMEOUT CONTROL
+    --==========================================================
+
+    local StartTime = self:Now()
+    local Timeout = self.Config.AI.Timeout
+
+    while not Finished do
+
+        if self:Now() - StartTime >= Timeout then
+            break
+        end
+
+        task.wait(0.05)
+
+    end
+
+    self.State.IsResponding = false
+
+    if not Finished then
+
+        self:AIError(
+            "TIMEOUT",
+            "O servidor não respondeu dentro do prazo."
+        )
+
+        return nil, self:AIErrorMessage()
+    end
+
+    if not Success then
+
+        self:AIError(
+            "CONNECTION",
+            tostring(Result)
+        )
+
+        return nil, self:AIErrorMessage()
+    end
+
+    --==========================================================
+    -- VALIDATE RESULT
+    --==========================================================
+
+    local ResponseValid, ResponseText =
+        self:ValidateAIResponse(Result)
+
+    if not ResponseValid then
+
+        self:AIError(
+            "SERVER",
+            ResponseText
+        )
+
+        return nil, self:AIErrorMessage()
+    end
+
+    --==========================================================
+    -- SUCCESS
+    --==========================================================
+
+    self.State.Connected = true
+    self.State.APIAvailable = true
+
+    self.State.LastResponse = ResponseText
+
+    self.State.QuestionsAnswered += 1
+
+    local Latency = self:Now() - StartTime
+
+    self:Log(
+        "AI",
+        "Resposta recebida em " ..
+        self:FormatTime(Latency) .. " segundos."
+    )
+
+    if self.UI and self.UI.AI then
+
+        self.UI.AI.UpdateStatus()
+
+    end
+
+    return ResponseText
+
+end
+
+--==============================================================
+-- CONNECTION STATUS
+--==============================================================
+
+function COS:GetAIStatus()
+
+    return {
+
+        Provider = self.Config.AI.Provider,
+
+        Model = self.Config.AI.Model,
+
+        Connected = self.State.Connected,
+
+        Available = self.State.APIAvailable,
+
+        Responding = self.State.IsResponding,
+
+        Timeout = self.Config.AI.Timeout,
+
+    }
+
+end
+
+--==============================================================
+-- INITIALIZATION
+--==============================================================
+
+COS:Log(
+    "AI",
+    "Sistema de comunicação preparado."
+)
+
+print("[COS] Parte 4 carregada.")
+
+--==============================================================
+-- FIM DA PARTE 4/8
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 5/8
+-- SISTEMA DE CHAT E RESPOSTAS AUTOMÁTICAS
+--==============================================================
+
+--==============================================================
+-- CHAT SYSTEM
+--==============================================================
+
+COS.Chat = COS.Chat or {}
+
+COS.Chat.LastMessage = nil
+COS.Chat.LastMessageTime = 0
+COS.Chat.ResponseHandler = nil
+
+--==============================================================
+-- AUTOMATIC RESPONSE PATTERNS
+--==============================================================
+
+COS.Data.AutomaticResponsePatterns = {
+
+    Greetings = {
+        {
+            Pattern = "^oi$",
+            Response = "Oi! Tudo bem?"
+        },
+        {
+            Pattern = "^olá$",
+            Response = "Olá! Como posso ajudar?"
+        },
+        {
+            Pattern = "^eae$",
+            Response = "Eae! Tudo certo?"
+        },
+        {
+            Pattern = "^opa$",
+            Response = "Opa!"
+        },
+        {
+            Pattern = "^bom dia$",
+            Response = "Bom dia!"
+        },
+            {
+            Pattern = "^boa tarde$",
+            Response = "Boa tarde!"
+        },
+        {
+            Pattern = "^boa noite$",
+            Response = "Boa noite!"
+        },
+    },
+
+    Identity = {
+        {
+            Pattern = "quem é você",
+            Response = "Sou o COS, um assistente de IA dentro do Roblox."
+        },
+        {
+            Pattern = "qual seu nome",
+            Response = "Meu nome é COS!"
+        },
+        {
+            Pattern = "você é um bot",
+            Response = "Sou um assistente controlado por inteligência artificial."
+        },
+    },
+
+    Basic = {
+        {
+            Pattern = "^tudo bem",
+            Response = "Tudo certo por aqui! E com você?"
+        },
+        {
+            Pattern = "^como vai",
+            Response = "Estou funcionando normalmente!"
+        },
+    },
+}
+
+--==============================================================
+-- MESSAGE NORMALIZATION
+--==============================================================
+
+function COS:NormalizeChatMessage(Message)
+
+    if typeof(Message) ~= "string" then
+        return ""
+    end
+
+    Message = self:Normalize(Message)
+
+    Message = Message:gsub("[%c]", " ")
+    Message = Message:gsub("%s+", " ")
+
+    return self:Trim(Message)
+end
+
+--==============================================================
+-- QUESTION DETECTION
+--==============================================================
+
+function COS:IsQuestion(Message)
+
+    if typeof(Message) ~= "string" then
+        return false
+    end
+
+    local Text = self:NormalizeChatMessage(Message)
+
+    if Text:find("%?") then
+        return true
+    end
+
+    local Keywords = {
+        "quem",
+        "qual",
+        "quando",
+        "onde",
+        "como",
+        "porque",
+        "por que",
+        "quanto",
+        "quantos",
+        "quantas",
+        "pode",
+        "posso",
+        "consegue",
+        "sabe",
+        "será",
+        "é verdade",
+    }
+
+    for _, Keyword in ipairs(Keywords) do
+
+        if Text:match("^" .. Keyword .. "%f[%W]")
+            or Text:find(" " .. Keyword .. "%f[%W]") then
+
+            return true
+
+        end
+    end
+
+    return false
+end
+
+--==============================================================
+-- COS MENTION DETECTION
+--==============================================================
+
+function COS:IsMentioned(Message)
+
+    local Text = self:NormalizeChatMessage(Message)
+
+    local Names = {
+        "cos",
+        "chatgptoss",
+    }
+
+    for _, Name in ipairs(Names) do
+
+        if Text:find(Name, 1, true) then
+            return true
+        end
+
+    end
+
+    return false
+end
+
+--==============================================================
+-- AUTOMATIC RESPONSES
+--==============================================================
+
+function COS:GetAutomaticResponse(Message)
+
+    if not self.Config.AutomaticResponses.Enabled then
+        return nil
+    end
+
+    local Text = self:NormalizeChatMessage(Message)
+
+    local Categories = {
+        "Greetings",
+        "Identity",
+        "Basic",
+    }
+
+    for _, Category in ipairs(Categories) do
+
+        if not self.Config.AutomaticResponses[Category] then
+            continue
+        end
+
+        local Patterns =
+            self.Data.AutomaticResponsePatterns[Category]
+
+        for _, Entry in ipairs(Patterns) do
+
+            if Text:find(Entry.Pattern) then
+                return Entry.Response
+            end
+
+        end
+    end
+
+    return nil
+end
+
+--==============================================================
+-- DUPLICATE MESSAGE CONTROL
+--==============================================================
+
+function COS:ProcessChatMessageId(MessageId)
+
+    if not self.Config.Chat.IgnoreDuplicates then
+        return true
+    end
+
+    if not MessageId then
+        return true
+    end
+
+    if self:HasProcessedMessage(MessageId) then
+        return false
+    end
+
+    self:MarkMessageProcessed(MessageId)
+
+    return true
+end
+
+--==============================================================
+-- RESPONSE DELIVERY
+--==============================================================
+
+function COS:SetChatResponseHandler(Handler)
+
+    if typeof(Handler) ~= "function" then
+        self.Chat.ResponseHandler = nil
+        return false
+    end
+
+    self.Chat.ResponseHandler = Handler
+
+    self:Log(
+        "CHAT",
+        "Manipulador autorizado de respostas configurado."
+    )
+
+    return true
+end
+
+function COS:DeliverChatResponse(Message)
+
+    if typeof(Message) ~= "string" then
+        return false
+    end
+
+    Message = self:Trim(Message)
+
+    if Message == "" then
+        return false
+    end
+
+    local Maximum =
+        self.Config.Chat.MaximumMessageLength
+
+    if #Message > Maximum then
+        Message = string.sub(Message, 1, Maximum)
+    end
+
+    local Handler = self.Chat.ResponseHandler
+
+    if not Handler then
+
+        self:Log(
+            "CHAT",
+            "Resposta preparada, mas nenhum manipulador autorizado foi configurado."
+        )
+
+        return false
+    end
+
+    local Success, Result = pcall(
+        Handler,
+        Message
+    )
+
+    if not Success then
+
+        self:Log(
+            "CHAT_ERROR",
+            tostring(Result)
+        )
+
+        return false
+    end
+
+    self.State.MessagesSent += 1
+
+    self.State.LastResponse = Message
+
+    self:Log(
+        "CHAT",
+        "Resposta entregue ao manipulador."
+    )
+
+    return true
+end
+
+--==============================================================
+-- COOLDOWN RESPONSE
+--==============================================================
+
+function COS:GetCooldownMessage()
+
+    local Remaining = math.ceil(
+        self:GetRemainingCooldown()
+    )
+
+    local Template =
+        self.Config.Cooldown.WaitMessage
+
+    return string.format(
+        Template,
+        tostring(Remaining)
+    )
+end
+
+--==============================================================
+-- MAIN MESSAGE PROCESSOR
+--==============================================================
+
+function COS:ProcessIncomingMessage(Data)
+
+    if not self.Config.Chat.Enabled then
+        return false
+    end
+
+    if not self.Config.Chat.ReadMessages then
+        return false
+    end
+
+    if typeof(Data) ~= "table" then
+        return false
+    end
+
+    local Message = Data.Text
+    local Sender = Data.Sender
+    local MessageId = Data.MessageId
+
+    if typeof(Message) ~= "string" then
+        return false
+    end
+
+    if self.Config.Chat.IgnoreOwnMessages
+        and Data.IsLocalPlayer == true then
+
+        return false
+    end
+
+    if not self:ProcessChatMessageId(MessageId) then
+        return false
+    end
+
+    Message = self:Trim(Message)
+
+    if Message == "" then
+        return false
+    end
+
+    self.State.MessagesReceived += 1
+
+    self:Log(
+        "CHAT",
+        tostring(Sender or "Jogador") .. ": " .. Message
+    )
+
+    --==========================================================
+    -- CHECK RELEVANCE
+    --==========================================================
+
+    local Mentioned = self:IsMentioned(Message)
+    local Question = self:IsQuestion(Message)
+
+    if self.Config.Chat.RespondWhenMentioned
+        and not Mentioned
+        and not Question then
+
+        return false
+    end
+
+    --==========================================================
+    -- AUTOMATIC RESPONSE
+    --==========================================================
+
+    local Automatic =
+        self:GetAutomaticResponse(Message)
+
+    if Automatic then
+
+        if self:IsCoolingDown() then
+
+            self:DeliverChatResponse(
+                self:GetCooldownMessage()
+            )
+
+            return false
+        end
+
+        if self.Config.Cooldown.Enabled then
+            self:StartCooldown()
+        end
+
+        self:DeliverChatResponse(Automatic)
+
+        return true
+    end
+
+    --==========================================================
+    -- QUESTION COUNTER
+    --==========================================================
+
+    if Question or Mentioned then
+
+        self.State.QuestionsReceived += 1
+
+        self.State.LastQuestion = Message
+
+    end
+
+    --==========================================================
+    -- COOLDOWN
+    --==========================================================
+
+    if self:IsCoolingDown() then
+
+        self:DeliverChatResponse(
+            self:GetCooldownMessage()
+        )
+
+        return false
+    end
+
+    if self.Config.Cooldown.Enabled
+        and self.Config.Cooldown.StartOnQuestionReceived
+        and (Question or Mentioned) then
+
+        self:StartCooldown()
+
+    end
+
+    --==========================================================
+    -- AI REQUEST
+    --==========================================================
+
+    if not Question and not Mentioned then
+        return false
+    end
+
+    if not self.Config.General.Enabled then
+        return false
+    end
+
+    task.spawn(function()
+
+        local Response = self:RequestAI(Message)
+
+        if Response then
+
+            self:DeliverChatResponse(Response)
+
+        else
+
+            self:DeliverChatResponse(
+                self:AIErrorMessage()
+            )
+
+        end
+
+    end)
+
+    return true
+end
+
+--==============================================================
+-- COOLDOWN SETTINGS
+--==============================================================
+
+function COS:SetCooldown(Duration)
+
+    Duration = tonumber(Duration)
+
+    if not Duration then
+        return false
+    end
+
+    Duration = math.clamp(
+        math.floor(Duration),
+        1,
+        120
+    )
+
+    self.Config.Cooldown.Duration = Duration
+
+    self:Log(
+        "COOLDOWN",
+        "Duração alterada para " .. Duration .. " segundos."
+    )
+
+    return true
+end
+
+--==============================================================
+-- INITIALIZATION
+--==============================================================
+
+COS:Log(
+    "CHAT",
+    "Processador de mensagens carregado."
+)
+
+print("[COS] Parte 5 carregada.")
+
+--==============================================================
+-- FIM DA PARTE 5/8
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 6/8
+-- PERCEPÇÃO DO AMBIENTE
+--==============================================================
+
+COS.Perception = COS.Perception or {}
+
+COS.Perception.LastScan = 0
+COS.Perception.IsScanning = false
+
+COS.Perception.Events = {}
+COS.Perception.MaximumEvents = 100
+
+--==============================================================
+-- ENVIRONMENT DATA
+--==============================================================
+
+COS.Data.Environment = {
+    Players = {},
+    Objects = {},
+    Structures = {},
+    Disasters = {},
+    OwnCharacter = {},
+    LastScan = 0,
+}
+
+--==============================================================
+-- DISTANCE
+--==============================================================
+
+function COS:GetDistance(PositionA, PositionB)
+
+    if not PositionA or not PositionB then
+        return math.huge
+    end
+
+    return (PositionA - PositionB).Magnitude
+end
+
+--==============================================================
+-- CHARACTER OBSERVATION
+--==============================================================
+
+function COS:ObserveOwnCharacter()
+
+    if not self.Config.Perception.ObserveOwnCharacter then
+        return nil
+    end
+
+    self:UpdateCharacter()
+
+    local Character = self:GetCharacter()
+    local Humanoid = self:GetHumanoid()
+    local RootPart = self:GetRootPart()
+
+    if not Character or not Humanoid or not RootPart then
+        return nil
+    end
+
+    local Information = {
+        Name = Character.Name,
+        Position = RootPart.Position,
+        Health = Humanoid.Health,
+        MaxHealth = Humanoid.MaxHealth,
+        HealthPercent = 0,
+        WalkSpeed = Humanoid.WalkSpeed,
+        JumpPower = Humanoid.JumpPower,
+        MoveDirection = Humanoid.MoveDirection,
+        IsMoving = Humanoid.MoveDirection.Magnitude > 0.05,
+        FloorMaterial = tostring(Humanoid.FloorMaterial),
+        State = tostring(Humanoid:GetState()),
+    }
+
+    if Humanoid.MaxHealth > 0 then
+        Information.HealthPercent =
+            Humanoid.Health / Humanoid.MaxHealth * 100
+    end
+
+    self.Data.Environment.OwnCharacter = Information
+
+    return Information
+end
+
+--==============================================================
+-- PLAYER OBSERVATION
+--==============================================================
+
+function COS:ObservePlayers()
+
+    if not self.Config.Perception.ObservePlayers then
+        return {}
+    end
+
+    local RootPart = self:GetRootPart()
+
+    if not RootPart then
+        return {}
+    end
+
+    local Results = {}
+
+    for _, Player in ipairs(Players:GetPlayers()) do
+
+        if Player == LocalPlayer then
+            continue
+        end
+
+        local Character = Player.Character
+
+        if not Character then
+            continue
+        end
+
+        local Humanoid =
+            Character:FindFirstChildOfClass("Humanoid")
+
+        local PlayerRoot =
+            Character:FindFirstChild("HumanoidRootPart")
+
+        if not PlayerRoot then
+            continue
+        end
+
+        local Distance = self:GetDistance(
+            RootPart.Position,
+            PlayerRoot.Position
+        )
+
+        if Distance > self.Config.Perception.ObservationRadius then
+            continue
+        end
+
+        table.insert(Results, {
+            Name = Player.Name,
+            DisplayName = Player.DisplayName,
+            UserId = Player.UserId,
+            Position = PlayerRoot.Position,
+            Distance = Distance,
+            Health = Humanoid and Humanoid.Health or nil,
+            MaxHealth = Humanoid and Humanoid.MaxHealth or nil,
+            IsAlive = Humanoid ~= nil
+                and Humanoid.Health > 0,
+        })
+
+    end
+
+    self.Data.Environment.Players = Results
+
+    self.Data.Players = Results
+
+    return Results
+end
+
+--==============================================================
+-- OBJECT OBSERVATION
+--==============================================================
+
+function COS:ObserveObjects()
+
+    if not self.Config.Perception.ObserveObjects then
+        return {}
+    end
+
+    local RootPart = self:GetRootPart()
+
+    if not RootPart then
+        return {}
+    end
+
+    local Results = {}
+
+    local Radius =
+        self.Config.Perception.ObservationRadius
+
+    for _, Object in ipairs(
+        Workspace:GetDescendants()
+    ) do
+
+        if not Object:IsA("BasePart") then
+            continue
+        end
+
+        if Object.Parent == nil then
+            continue
+        end
+
+        local Distance = self:GetDistance(
+            RootPart.Position,
+            Object.Position
+        )
+
+        if Distance > Radius then
+            continue
+        end
+
+        if #Results >= 150 then
+            break
+        end
+
+        table.insert(Results, {
+            Name = Object.Name,
+            ClassName = Object.ClassName,
+            Position = Object.Position,
+            Distance = Distance,
+            Size = Object.Size,
+            Anchored = Object.Anchored,
+            CanCollide = Object.CanCollide,
+            Material = tostring(Object.Material),
+            Transparency = Object.Transparency,
+        })
+
+    end
+
+    self.Data.Environment.Objects = Results
+
+    return Results
+end
+
+--==============================================================
+-- STRUCTURE OBSERVATION
+--==============================================================
+
+function COS:ObserveStructures()
+
+    if not self.Config.Perception.ObserveStructures then
+        return {}
+    end
+
+    local RootPart = self:GetRootPart()
+
+    if not RootPart then
+        return {}
+    end
+
+    local Results = {}
+
+    for _, Object in ipairs(
+        Workspace:GetChildren()
+    ) do
+
+        if not Object:IsA("Model") then
+            continue
+        end
+
+        local Success, Pivot = pcall(function()
+            return Object:GetPivot()
+        end)
+
+        if not Success then
+            continue
+        end
+
+        local Distance = self:GetDistance(
+            RootPart.Position,
+            Pivot.Position
+        )
+
+        if Distance > self.Config.Perception.ObservationRadius then
+            continue
+        end
+
+        table.insert(Results, {
+            Name = Object.Name,
+            Position = Pivot.Position,
+            Distance = Distance,
+            PartCount = #Object:GetDescendants(),
+        })
+
+    end
+
+    self.Data.Environment.Structures = Results
+
+    return Results
+end
+
+--==============================================================
+-- DISASTER OBSERVATION
+--==============================================================
+
+function COS:ObserveDisasters()
+
+    if not self.Config.Perception.ObserveDisasters then
+        return {}
+    end
+
+    local Results = {}
+
+    -- Somente nomes de objetos e atributos
+    -- replicados e visíveis ao cliente.
+
+    local PossibleNames = {
+        "Tornado",
+        "Earthquake",
+        "Flood",
+        "Tsunami",
+        "Volcano",
+        "Meteor",
+        "Blizzard",
+        "Sandstorm",
+        "Fire",
+        "AcidRain",
+    }
+
+    local SearchRoots = {
+        Workspace,
+    }
+
+    for _, Root in ipairs(SearchRoots) do
+
+        for _, Object in ipairs(
+            Root:GetDescendants()
+        ) do
+
+            local Name = string.lower(Object.Name)
+
+            for _, DisasterName in ipairs(PossibleNames) do
+
+                if Name:find(
+                    string.lower(DisasterName),
+                    1,
+                    true
+                ) then
+
+                    table.insert(Results, {
+                        Name = DisasterName,
+                        ObjectName = Object.Name,
+                        ClassName = Object.ClassName,
+                    })
+
+                    break
+                end
+
+            end
+
+            if #Results >= 30 then
+                break
+            end
+
+        end
+
+    end
+
+    self.Data.Environment.Disasters = Results
+
+    if #Results > 0 then
+
+        self.State.CurrentDisaster =
+            Results[1].Name
+
+    else
+
+        self.State.CurrentDisaster = nil
+
+    end
+
+    return Results
+end
+
+--==============================================================
+-- EVENT STORAGE
+--==============================================================
+
+function COS:AddPerceptionEvent(Category, Information)
+
+    local Event = {
+        Category = tostring(Category),
+        Information = Information,
+        Timestamp = os.date("%H:%M:%S"),
+        Clock = self:Now(),
+    }
+
+    table.insert(
+        self.Perception.Events,
+        Event
+    )
+
+    while #self.Perception.Events >
+        self.Perception.MaximumEvents do
+
+        table.remove(
+            self.Perception.Events,
+            1
+        )
+
+    end
+
+    if self.Config.Debug.ShowPerceptionEvents then
+
+        self:Log(
+            "PERCEPTION",
+            Category
+        )
+
+    end
+
+    return Event
+end
+
+--==============================================================
+-- FULL ENVIRONMENT SCAN
+--==============================================================
+
+function COS:ScanEnvironment()
+
+    if not self.Config.Perception.Enabled then
+        return false
+    end
+
+    if self.Perception.IsScanning then
+        return false
+    end
+
+    self.Perception.IsScanning = true
+
+    local Success, ErrorMessage = pcall(function()
+
+        self:ObserveOwnCharacter()
+        self:ObservePlayers()
+        self:ObserveObjects()
+        self:ObserveStructures()
+        self:ObserveDisasters()
+
+        self.Data.Environment.LastScan = self:Now()
+
+        self.Perception.LastScan = self:Now()
+
+    end)
+
+    self.Perception.IsScanning = false
+
+    if not Success then
+
+        self:Log(
+            "PERCEPTION_ERROR",
+            tostring(ErrorMessage)
+        )
+
+        return false
+    end
+
+    return true
+end
+
+--==============================================================
+-- ENVIRONMENT SUMMARY
+--==============================================================
+
+function COS:GetEnvironmentSummary()
+
+    local Environment = self.Data.Environment
+
+    return {
+        Position = Environment.OwnCharacter.Position,
+        Health = Environment.OwnCharacter.Health,
+        PlayersNearby = #Environment.Players,
+        ObjectsNearby = #Environment.Objects,
+        StructuresNearby = #Environment.Structures,
+        DetectedDisasters = Environment.Disasters,
+        CurrentDisaster = self.State.CurrentDisaster,
+        LastScan = Environment.LastScan,
+    }
+end
+
+--==============================================================
+-- PERIODIC SCANNING
+--==============================================================
+
+function COS:StartPerception()
+
+    if self.Perception.Running then
+        return
+    end
+
+    self.Perception.Running = true
+
+    task.spawn(function()
+
+        while self.Perception.Running
+            and self.State.Running do
+
+            local Interval = math.clamp(
+                self.Config.Perception.UpdateInterval,
+                1,
+                10
+            )
+
+            self:ScanEnvironment()
+
+            task.wait(Interval)
+
+        end
+
+    end)
+
+    self:Log(
+        "PERCEPTION",
+        "Observação periódica iniciada."
+    )
+end
+
+function COS:StopPerception()
+
+    self.Perception.Running = false
+
+    self:Log(
+        "PERCEPTION",
+        "Observação periódica interrompida."
+    )
+end
+
+--==============================================================
+-- INITIALIZATION
+--==============================================================
+
+COS:Log(
+    "PERCEPTION",
+    "Sistema de percepção carregado."
+)
+
+print("[COS] Parte 6 carregada.")
+
+--==============================================================
+-- FIM DA PARTE 6/8
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 7/8
+-- MOVIMENTO E TOMADA DE DECISÕES
+--==============================================================
+
+COS.Decision = COS.Decision or {}
+COS.Movement = COS.Movement or {}
+
+COS.Decision.LastDecision = nil
+COS.Decision.LastEvaluation = 0
+COS.Decision.IsThinking = false
+
+COS.Movement.Running = false
+COS.Movement.CurrentTarget = nil
+COS.Movement.LastPosition = nil
+
+--==============================================================
+-- DECISION PRIORITIES
+--==============================================================
+
+COS.Decision.Priority = {
+    Critical = 100,
+    High = 75,
+    Medium = 50,
+    Low = 25,
+    None = 0,
+}
+
+--==============================================================
+-- DECISION STORAGE
+--==============================================================
+
+COS.Decision.History = {}
+COS.Decision.MaximumHistory = 100
+
+function COS:AddDecision(Category, Description, Priority)
+
+    local Entry = {
+        Category = tostring(Category),
+        Description = tostring(Description),
+        Priority = Priority or 0,
+        Timestamp = os.date("%H:%M:%S"),
+        Clock = self:Now(),
+    }
+
+    table.insert(
+        self.Decision.History,
+        Entry
+    )
+
+    while #self.Decision.History >
+        self.Decision.MaximumHistory do
+
+        table.remove(
+            self.Decision.History,
+            1
+        )
+
+    end
+
+    self.Decision.LastDecision = Entry
+
+    self:Log(
+        "DECISION",
+        Entry.Category .. ": " .. Entry.Description
+    )
+
+    return Entry
+end
+
+--==============================================================
+-- HEALTH EVALUATION
+--==============================================================
+
+function COS:EvaluateHealth()
+
+    local Humanoid = self:GetHumanoid()
+
+    if not Humanoid then
+        return "UNKNOWN", 0
+    end
+
+    if Humanoid.Health <= 0 then
+        return "DEAD", 100
+    end
+
+    local Percentage = 100
+
+    if Humanoid.MaxHealth > 0 then
+
+        Percentage =
+            Humanoid.Health / Humanoid.MaxHealth * 100
+
+    end
+
+    if Percentage <= 20 then
+        return "CRITICAL", 100
+    elseif Percentage <= 45 then
+        return "LOW", 75
+    elseif Percentage <= 75 then
+        return "MEDIUM", 40
+    end
+
+    return "HEALTHY", 0
+end
+
+--==============================================================
+-- ENVIRONMENT RISK EVALUATION
+--==============================================================
+
+function COS:EvaluateEnvironmentRisk()
+
+    local Risk = 0
+    local Reasons = {}
+
+    local Environment = self.Data.Environment
+
+    if not Environment then
+        return Risk, Reasons
+    end
+
+    local HealthState, HealthRisk =
+        self:EvaluateHealth()
+
+    Risk += HealthRisk
+
+    if HealthState == "CRITICAL" then
+
+        table.insert(
+            Reasons,
+            "Saúde em estado crítico."
+        )
+
+    elseif HealthState == "LOW" then
+
+        table.insert(
+            Reasons,
+            "Saúde abaixo do nível recomendado."
+        )
+
+    end
+
+    local Humanoid = self:GetHumanoid()
+
+    if Humanoid then
+
+        if Humanoid.FloorMaterial ==
+            Enum.Material.Air then
+
+            Risk += 10
+
+            table.insert(
+                Reasons,
+                "Personagem sem contato com o chão."
+            )
+
+        end
+
+        if Humanoid:GetState() ==
+            Enum.HumanoidStateType.FallingDown then
+
+            Risk += 20
+
+            table.insert(
+                Reasons,
+                "Personagem perdeu o equilíbrio."
+            )
+
+        end
+
+    end
+
+    if self.State.CurrentDisaster then
+
+        Risk += 25
+
+        table.insert(
+            Reasons,
+            "Possível desastre identificado: " ..
+            tostring(self.State.CurrentDisaster)
+        )
+
+    end
+
+    Risk = math.clamp(Risk, 0, 100)
+
+    return Risk, Reasons
+end
+
+--==============================================================
+-- PLAYER DISTANCE ANALYSIS
+--==============================================================
+
+function COS:GetNearestPlayer()
+
+    local PlayersData =
+        self.Data.Environment.Players
+
+    local Nearest = nil
+    local MinimumDistance = math.huge
+
+    for _, PlayerData in ipairs(PlayersData) do
+
+        if PlayerData.Distance < MinimumDistance then
+
+            MinimumDistance = PlayerData.Distance
+            Nearest = PlayerData
+
+        end
+
+    end
+
+    return Nearest, MinimumDistance
+end
+
+--==============================================================
+-- SAFE POSITION CHECK
+--==============================================================
+
+function COS:IsPositionAvailable(Position)
+
+    if typeof(Position) ~= "Vector3" then
+        return false
+    end
+
+    local Character = self:GetCharacter()
+
+    if not Character then
+        return false
+    end
+
+    local Parameters = RaycastParams.new()
+
+    Parameters.FilterType =
+        Enum.RaycastFilterType.Exclude
+
+    Parameters.FilterDescendantsInstances = {
+        Character
+    }
+
+    local Origin = Position + Vector3.new(0, 4, 0)
+
+    local Result = Workspace:Raycast(
+        Origin,
+        Vector3.new(0, -10, 0),
+        Parameters
+    )
+
+    if not Result then
+        return false
+    end
+
+    if Result.Instance.CanCollide == false then
+        return false
+    end
+
+    return true
+end
+
+--==============================================================
+-- OBJECTIVE SELECTION
+--==============================================================
+
+function COS:SelectMovementObjective()
+
+    local RootPart = self:GetRootPart()
+
+    if not RootPart then
+        return nil, "Personagem indisponível."
+    end
+
+    local Risk, Reasons =
+        self:EvaluateEnvironmentRisk()
+
+    local HealthState =
+        self:EvaluateHealth()
+
+    if HealthState == "DEAD" then
+
+        return nil, "Personagem está morto."
+
+    end
+
+    -- Sem informações confiáveis sobre o desastre,
+    -- o COS não escolhe uma rota automática.
+
+    if self.State.CurrentDisaster then
+
+        return nil,
+            "Aguardando informações confiáveis sobre o ambiente."
+
+    end
+
+    if Risk >= 75 then
+
+        return nil,
+            "Risco elevado. Movimento automático suspenso."
+
+    end
+
+    return nil,
+        "Nenhum objetivo seguro identificado."
+end
+
+--==============================================================
+-- DECISION ENGINE
+--==============================================================
+
+function COS:Think()
+
+    if self.Decision.IsThinking then
+        return nil
+    end
+
+    self.Decision.IsThinking = true
+
+    local Success, Result = pcall(function()
+
+        local Risk, Reasons =
+            self:EvaluateEnvironmentRisk()
+
+        local HealthState =
+            self:EvaluateHealth()
+
+        local Objective, ObjectiveReason =
+            self:SelectMovementObjective()
+
+        local Decision = {
+            Risk = Risk,
+            HealthState = HealthState,
+            Reasons = Reasons,
+            Objective = Objective,
+            ObjectiveReason = ObjectiveReason,
+            Timestamp = self:Now(),
+        }
+
+        if HealthState == "DEAD" then
+
+            self:AddDecision(
+                "HEALTH",
+                "Personagem indisponível.",
+                self.Decision.Priority.Critical
+            )
+
+        elseif Risk >= 75 then
+
+            self:AddDecision(
+                "SAFETY",
+                "Movimentação automática suspensa.",
+                self.Decision.Priority.High
+            )
+
+        else
+
+            self:AddDecision(
+                "ANALYSIS",
+                ObjectiveReason,
+                self.Decision.Priority.Low
+            )
+
+        end
+
+        self.Decision.LastEvaluation =
+            self:Now()
+
+        return Decision
+
+    end)
+
+    self.Decision.IsThinking = false
+
+    if not Success then
+
+        self:Log(
+            "DECISION_ERROR",
+            tostring(Result)
+        )
+
+        return nil
+    end
+
+    return Result
+end
+
+--==============================================================
+-- MOVEMENT CONFIGURATION
+--==============================================================
+
+function COS:SetMovementEnabled(Value)
+
+    self.Config.Movement.Enabled =
+        Value == true
+
+    if not self.Config.Movement.Enabled then
+        self:StopMovement()
+    end
+
+    self:Log(
+        "MOVEMENT",
+        self.Config.Movement.Enabled
+            and "Movimentação habilitada."
+            or "Movimentação desabilitada."
+    )
+end
+
+function COS:SetWalkSpeed(Value)
+
+    Value = tonumber(Value)
+
+    if not Value then
+        return false
+    end
+
+    Value = math.clamp(Value, 0, 16)
+
+    self.Config.Movement.WalkSpeed = Value
+
+    local Humanoid = self:GetHumanoid()
+
+    if Humanoid then
+        Humanoid.WalkSpeed = Value
+    end
+
+    return true
+end
+
+function COS:SetJumpPower(Value)
+
+    Value = tonumber(Value)
+
+    if not Value then
+        return false
+    end
+
+    Value = math.clamp(Value, 0, 50)
+
+    self.Config.Movement.JumpPower = Value
+
+    local Humanoid = self:GetHumanoid()
+
+    if Humanoid then
+
+        Humanoid.UseJumpPower = true
+        Humanoid.JumpPower = Value
+
+    end
+
+    return true
+end
+
+--==============================================================
+-- MANUAL MOVEMENT COMMAND
+--==============================================================
+
+function COS:MoveToPosition(Position)
+
+    if not self.Config.Movement.Enabled then
+        return false
+    end
+
+    if typeof(Position) ~= "Vector3" then
+        return false
+    end
+
+    local Humanoid = self:GetHumanoid()
+
+    if not Humanoid or Humanoid.Health <= 0 then
+        return false
+    end
+
+    if not self:IsPositionAvailable(Position) then
+
+        self:Log(
+            "MOVEMENT",
+            "Destino recusado: posição não validada."
+        )
+
+        return false
+    end
+
+    Humanoid:MoveTo(Position)
+
+    self.Movement.CurrentTarget = Position
+
+    self:AddDecision(
+        "MOVEMENT",
+        "Comando de movimentação autorizado.",
+        self.Decision.Priority.Medium
+    )
+
+    return true
+end
+
+--==============================================================
+-- MOVEMENT STOP
+--==============================================================
+
+function COS:StopMovement()
+
+    local Humanoid = self:GetHumanoid()
+
+    if Humanoid then
+        Humanoid:Move(Vector3.zero)
+    end
+
+    self.Movement.CurrentTarget = nil
+    self.Movement.Running = false
+
+    self:Log(
+        "MOVEMENT",
+        "Movimentação interrompida."
+    )
+end
+
+--==============================================================
+-- PERIODIC DECISION LOOP
+--==============================================================
+
+function COS:StartDecisionLoop()
+
+    if self.Decision.Running then
+        return
+    end
+
+    self.Decision.Running = true
+
+    task.spawn(function()
+
+        while self.Decision.Running
+            and self.State.Running do
+
+            if self.Config.General.AutonomousMode then
+
+                self:Think()
+
+            end
+
+            task.wait(2)
+
+        end
+
+    end)
+
+    self:Log(
+        "DECISION",
+        "Ciclo de decisões iniciado."
+    )
+end
+
+function COS:StopDecisionLoop()
+
+    self.Decision.Running = false
+
+    self:Log(
+        "DECISION",
+        "Ciclo de decisões interrompido."
+    )
+end
+
+--==============================================================
+-- CHARACTER RESPAWN HANDLING
+--==============================================================
+
+COS:AddConnection(
+    LocalPlayer.CharacterAdded:Connect(function()
+
+        task.wait(0.5)
+
+        COS:UpdateCharacter()
+
+        local Humanoid = COS:GetHumanoid()
+
+        if Humanoid then
+
+            Humanoid.WalkSpeed =
+                COS.Config.Movement.WalkSpeed
+
+            Humanoid.UseJumpPower = true
+
+            Humanoid.JumpPower =
+                COS.Config.Movement.JumpPower
+
+        end
+
+        COS:Log(
+            "MOVEMENT",
+            "Personagem atualizado após renascimento."
+        )
+
+    end)
+)
+
+--==============================================================
+-- INITIALIZATION
+--==============================================================
+
+COS:Log(
+    "MOVEMENT",
+    "Sistema de decisões carregado."
+)
+
+print("[COS] Parte 7 carregada.")
+
+--==============================================================
+-- FIM DA PARTE 7/8
+--==============================================================
+
+--==============================================================
+-- COS — PARTE 8/8
+-- INTEGRAÇÃO FINAL E INICIALIZAÇÃO
+--==============================================================
+
+--==============================================================
+-- FINAL DATA STRUCTURES
+--==============================================================
+
+COS.Data.Statistics = {
+    StartedAt = os.time(),
+    TotalDecisions = 0,
+    TotalScans = 0,
+    TotalMemories = 0,
+    TotalChatEvents = 0,
+}
+
+COS.State.StartedAt = os.time()
+
+COS.Finalized = false
+
+--==============================================================
+-- MEMORY SYSTEM
+--==============================================================
+
+function COS:RememberConversation(Sender, Message, Response)
+
+    if not self.Config.Memory.Enabled then
+        return false
+    end
+
+    if not self.Config.Memory.RememberConversations then
+        return false
+    end
+
+    local Entry = {
+        Sender = tostring(Sender or "Unknown"),
+        Message = tostring(Message or ""),
+        Response = tostring(Response or ""),
+        Timestamp = os.date("%H:%M:%S"),
+        Clock = self:Now(),
+    }
+
+    table.insert(
+        self.Data.Conversations,
+        Entry
+    )
+
+    while #self.Data.Conversations >
+        self.Config.Memory.MaximumEntries do
+
+        table.remove(self.Data.Conversations, 1)
+
+    end
+
+    self.Data.Statistics.TotalMemories += 1
+
+    return true
+end
+
+function COS:GetRecentMemories(Amount)
+
+    Amount = math.clamp(
+        tonumber(Amount) or 10,
+        1,
+        50
+    )
+
+    local Results = {}
+
+    local StartIndex = math.max(
+        1,
+        #self.Data.Experiences - Amount + 1
+    )
+
+    for Index = StartIndex, #self.Data.Experiences do
+
+        table.insert(
+            Results,
+            self.Data.Experiences[Index]
+        )
+
+    end
+
+    return Results
+end
+
+function COS:ClearSessionMemory()
+
+    table.clear(self.Data.Experiences)
+    table.clear(self.Data.Conversations)
+
+    self:Log(
+        "MEMORY",
+        "Memória da sessão limpa."
+    )
+
+end
+
+--==============================================================
+-- CHAT MEMORY INTEGRATION
+--==============================================================
+
+function COS:ProcessAndRememberChat(Data)
+
+    if typeof(Data) ~= "table" then
+        return false
+    end
+
+    local Success = self:ProcessIncomingMessage(Data)
+
+    if Success then
+
+        self.Data.Statistics.TotalChatEvents += 1
+
+    end
+
+    return Success
+end
+
+--==============================================================
+-- DECISION STATISTICS
+--==============================================================
+
+local OriginalAddDecision = COS.AddDecision
+
+function COS:AddDecision(Category, Description, Priority)
+
+    local Result = OriginalAddDecision(
+        self,
+        Category,
+        Description,
+        Priority
+    )
+
+    self.Data.Statistics.TotalDecisions += 1
+
+    return Result
+end
+
+--==============================================================
+-- PERCEPTION STATISTICS
+--==============================================================
+
+local OriginalScanEnvironment = COS.ScanEnvironment
+
+function COS:ScanEnvironment()
+
+    local Success = OriginalScanEnvironment(self)
+
+    if Success then
+        self.Data.Statistics.TotalScans += 1
+    end
+
+    return Success
+end
+
+--==============================================================
+-- SAFE ENVIRONMENT SUMMARY
+--==============================================================
+
+function COS:GetEnvironmentSummary()
+
+    local Environment = self.Data.Environment or {}
+
+    local Character = Environment.OwnCharacter or {}
+
+    return {
+        Position = Character.Position,
+        Health = Character.Health,
+        HealthPercent = Character.HealthPercent,
+
+        PlayersNearby = #(
+            Environment.Players or {}
+        ),
+
+        ObjectsNearby = #(
+            Environment.Objects or {}
+        ),
+
+        StructuresNearby = #(
+            Environment.Structures or {}
+        ),
+
+        DetectedDisasters =
+            Environment.Disasters or {},
+
+        CurrentDisaster =
+            self.State.CurrentDisaster,
+
+        LastScan =
+            Environment.LastScan or 0,
+    }
+
+end
+
+--==============================================================
+-- AUTOMATIC RESPONSE PATTERN FIX
+--==============================================================
+
+-- Os padrões da Parte 5 usam ^ e $.
+-- string.find sem o quarto argumento utiliza padrões Lua.
+
+function COS:GetAutomaticResponse(Message)
+
+    if not self.Config.AutomaticResponses.Enabled then
+        return nil
+    end
+
+    local Text = self:NormalizeChatMessage(Message)
+
+    local Categories = {
+        "Greetings",
+        "Identity",
+        "Basic",
+    }
+
+    for _, Category in ipairs(Categories) do
+
+        if not self.Config.AutomaticResponses[Category] then
+            continue
+        end
+
+        local Patterns =
+            self.Data.AutomaticResponsePatterns[Category]
+
+        for _, Entry in ipairs(Patterns) do
+
+            local Success, Matched = pcall(function()
+
+                return string.find(
+                    Text,
+                    Entry.Pattern
+                )
+
+            end)
+
+            if Success and Matched then
+                return Entry.Response
+            end
+
+        end
+
+    end
+
+    return nil
+end
+
+--==============================================================
+-- SESSION STATISTICS
+--==============================================================
+
+function COS:GetStatistics()
+
+    local Statistics = self.Data.Statistics
+
+    return {
+        Uptime = os.time() - Statistics.StartedAt,
+
+        MessagesReceived =
+            self.State.MessagesReceived,
+
+        MessagesSent =
+            self.State.MessagesSent,
+
+        QuestionsReceived =
+            self.State.QuestionsReceived,
+
+        QuestionsAnswered =
+            self.State.QuestionsAnswered,
+
+        ResearchesPerformed =
+            self.State.ResearchesPerformed,
+
+        Decisions =
+            Statistics.TotalDecisions,
+
+        EnvironmentScans =
+            Statistics.TotalScans,
+
+        Memories =
+            Statistics.TotalMemories,
+
+        Errors =
+            self.State.Errors,
+    }
+
+end
+
+--==============================================================
+-- UI STATUS UPDATER
+--==============================================================
+
+function COS:UpdateMainStatus()
+
+    if not self.UI then
+        return
+    end
+
+    local StatusLabel =
+        self.UI.Main:FindFirstChildWhichIsA(
+            "Frame"
+        )
+
+    if not StatusLabel then
+        return
+    end
+
+    local MainStatus =
+        StatusLabel:FindFirstChildWhichIsA(
+            "TextLabel"
+        )
+
+    if MainStatus then
+
+        MainStatus.Text =
+            self.State.Running
+            and "● COS ONLINE"
+            or "● COS OFFLINE"
+
+        MainStatus.TextColor3 =
+            self.State.Running
+            and self.UI.Theme.Green
+            or self.UI.Theme.Red
+
+    end
+
+end
+
+--==============================================================
+-- UI STATISTICS
+--==============================================================
+
+local function AddStatistic(Tab, Name, Getter)
+
+    COS.UI.Section(Tab, Name)
+
+    local Display = COS.UI.Info(
+        Tab,
+        "Carregando..."
+    )
+
+    return function()
+
+        local Success, Value = pcall(Getter)
+
+        if Success then
+
+            Display.Text = Name .. ": " .. tostring(Value)
+
+        else
+
+            Display.Text = Name .. ": indisponível"
+
+        end
+
+    end
+end
+
+local UpdateStatistics = {}
+
+UpdateStatistics.Messages = AddStatistic(
+    "Estatísticas",
+    "Mensagens recebidas",
+    function()
+        return COS.State.MessagesReceived
+    end
+)
+
+UpdateStatistics.Responses = AddStatistic(
+    "Estatísticas",
+    "Mensagens enviadas",
+    function()
+        return COS.State.MessagesSent
+    end
+)
+
+UpdateStatistics.Questions = AddStatistic(
+    "Estatísticas",
+    "Perguntas respondidas",
+    function()
+        return COS.State.QuestionsAnswered
+    end
+)
+
+UpdateStatistics.Decisions = AddStatistic(
+    "Estatísticas",
+    "Decisões",
+    function()
+        return COS.Data.Statistics.TotalDecisions
+    end
+)
+
+UpdateStatistics.Scans = AddStatistic(
+    "Estatísticas",
+    "Varreduras",
+    function()
+        return COS.Data.Statistics.TotalScans
+    end
+)
+
+UpdateStatistics.Errors = AddStatistic(
+    "Estatísticas",
+    "Erros",
+    function()
+        return COS.State.Errors
+    end
+)
+
+--==============================================================
+-- MEMORY UI
+--==============================================================
+
+COS.UI.Section(
+    "Memória",
+    "CONTROLE DA MEMÓRIA"
+)
+
+COS.UI.Info(
+    "Memória",
+    "As memórias são mantidas somente durante esta sessão."
+)
+
+COS.UI.Button(
+    "Memória",
+    "LIMPAR MEMÓRIA DA SESSÃO",
+    UDim2.new(1,-5,0,36)
+).MouseButton1Click:Connect(function()
+
+    COS:ClearSessionMemory()
+
+end)
+
+--==============================================================
+-- DEBUG UI
+--==============================================================
+
+COS.UI.Section(
+    "Debug",
+    "INFORMAÇÕES DO SISTEMA"
+)
+
+local DebugStatus = COS.UI.Info(
+    "Debug",
+    "Aguardando..."
+)
+
+local function UpdateDebug()
+
+    DebugStatus.Text = string.format(
+        "Versão: %s\nIA: %s\nPercepção: %s\nDecisões: %s",
+        COS.Version,
+        COS.State.APIAvailable and "Disponível"
+            or "Desconectada",
+        COS.Perception.Running and "Ativa"
+            or "Parada",
+        COS.Decision.Running and "Ativo"
+            or "Parado"
+    )
+
+end
+
+--==============================================================
+-- AUTONOMOUS MODE CONTROL
+--==============================================================
+
+COS.UI.Section(
+    "Geral",
+    "CONTROLE DO SISTEMA"
+)
+
+COS.UI.Toggle(
+    "Geral",
+    "Percepção automática",
+    COS.Config.Perception.Enabled,
+    function(Value)
+
+        COS.Config.Perception.Enabled = Value
+
+        if Value then
+            COS:StartPerception()
+        else
+            COS:StopPerception()
+        end
+
+    end
+)
+
+COS.UI.Toggle(
+    "Geral",
+    "Decisões automáticas",
+    COS.Config.General.AutonomousMode,
+    function(Value)
+
+        COS.Config.General.AutonomousMode = Value
+
+        if Value then
+            COS:StartDecisionLoop()
+        else
+            COS:StopDecisionLoop()
+        end
+
+    end
+)
+
+--==============================================================
+-- MAIN UPDATE LOOP
+--==============================================================
+
+COS.Connections = COS.Connections or {}
+
+COS:AddConnection(
+    RunService.Heartbeat:Connect(function()
+
+        if not COS.State.Running then
+            return
+        end
+
+        COS:UpdateCooldown()
+
+    end)
+)
+
+task.spawn(function()
+
+    while COS.State.Running do
+
+        COS:UpdateMainStatus()
+
+        UpdateDebug()
+
+        for _, UpdateFunction in pairs(
+            UpdateStatistics
+        ) do
+
+            UpdateFunction()
+
+        end
+
+        task.wait(1)
+
+    end
+
+end)
+
+--==============================================================
+-- SHUTDOWN
+--==============================================================
+
+function COS:Shutdown()
+
+    if not self.State.Running then
+        return
+    end
+
+    self.State.Running = false
+
+    self:StopPerception()
+    self:StopDecisionLoop()
+    self:StopMovement()
+
+    self:DisconnectAll()
+
+    if self.UI and self.UI.ScreenGui then
+        self.UI.ScreenGui:Destroy()
+    end
+
+    self.State.Connected = false
+    self.State.APIAvailable = false
+
+    self:Log(
+        "SYSTEM",
+        "COS encerrado."
+    )
+
+end
+
+--==============================================================
+-- FINAL INITIALIZATION
+--==============================================================
+
+COS:UpdateCharacter()
+
+if COS.Config.Perception.Enabled then
+    COS:StartPerception()
+end
+
+if COS.Config.General.AutonomousMode then
+    COS:StartDecisionLoop()
+end
+
+COS.Finalized = true
+
+COS:Log(
+    "SYSTEM",
+    "COS inicializado."
+)
+
+print("================================")
+print(" COS — CHATGPTOSS")
+print(" Versão:", COS.Version)
+print(" Todas as 8 partes carregadas.")
+print(" Sistemas integrados.")
+print("================================")
+
+--==============================================================
+-- FIM DA PARTE 8/8
+--==============================================================

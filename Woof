@@ -3608,6 +3608,7 @@ print("[COS] Parte 7 carregada.")
 -- FIM DA PARTE 7/8
 --==============================================================
 
+
 --==============================================================
 -- COS — PARTE 8/8
 -- INTEGRAÇÃO FINAL E INICIALIZAÇÃO
@@ -3626,7 +3627,6 @@ COS.Data.Statistics = {
 }
 
 COS.State.StartedAt = os.time()
-
 COS.Finalized = false
 
 --==============================================================
@@ -3651,10 +3651,7 @@ function COS:RememberConversation(Sender, Message, Response)
         Clock = self:Now(),
     }
 
-    table.insert(
-        self.Data.Conversations,
-        Entry
-    )
+    table.insert(self.Data.Conversations, Entry)
 
     while #self.Data.Conversations >
         self.Config.Memory.MaximumEntries do
@@ -3700,6 +3697,8 @@ function COS:ClearSessionMemory()
     table.clear(self.Data.Experiences)
     table.clear(self.Data.Conversations)
 
+    self.Data.Statistics.TotalMemories = 0
+
     self:Log(
         "MEMORY",
         "Memória da sessão limpa."
@@ -3708,71 +3707,12 @@ function COS:ClearSessionMemory()
 end
 
 --==============================================================
--- CHAT MEMORY INTEGRATION
---==============================================================
-
-function COS:ProcessAndRememberChat(Data)
-
-    if typeof(Data) ~= "table" then
-        return false
-    end
-
-    local Success = self:ProcessIncomingMessage(Data)
-
-    if Success then
-
-        self.Data.Statistics.TotalChatEvents += 1
-
-    end
-
-    return Success
-end
-
---==============================================================
--- DECISION STATISTICS
---==============================================================
-
-local OriginalAddDecision = COS.AddDecision
-
-function COS:AddDecision(Category, Description, Priority)
-
-    local Result = OriginalAddDecision(
-        self,
-        Category,
-        Description,
-        Priority
-    )
-
-    self.Data.Statistics.TotalDecisions += 1
-
-    return Result
-end
-
---==============================================================
--- PERCEPTION STATISTICS
---==============================================================
-
-local OriginalScanEnvironment = COS.ScanEnvironment
-
-function COS:ScanEnvironment()
-
-    local Success = OriginalScanEnvironment(self)
-
-    if Success then
-        self.Data.Statistics.TotalScans += 1
-    end
-
-    return Success
-end
-
---==============================================================
--- SAFE ENVIRONMENT SUMMARY
+-- ENVIRONMENT SUMMARY
 --==============================================================
 
 function COS:GetEnvironmentSummary()
 
     local Environment = self.Data.Environment or {}
-
     local Character = Environment.OwnCharacter or {}
 
     return {
@@ -3805,55 +3745,46 @@ function COS:GetEnvironmentSummary()
 end
 
 --==============================================================
--- AUTOMATIC RESPONSE PATTERN FIX
+-- DECISION STATISTICS
 --==============================================================
 
--- Os padrões da Parte 5 usam ^ e $.
--- string.find sem o quarto argumento utiliza padrões Lua.
+local OriginalAddDecision = COS.AddDecision
 
-function COS:GetAutomaticResponse(Message)
+if type(OriginalAddDecision) == "function" then
 
-    if not self.Config.AutomaticResponses.Enabled then
-        return nil
+    function COS:AddDecision(Category, Description, Priority)
+
+        local Result = OriginalAddDecision(
+            self,
+            Category,
+            Description,
+            Priority
+        )
+
+        self.Data.Statistics.TotalDecisions += 1
+
+        return Result
     end
 
-    local Text = self:NormalizeChatMessage(Message)
+end
 
-    local Categories = {
-        "Greetings",
-        "Identity",
-        "Basic",
-    }
+--==============================================================
+-- PERCEPTION STATISTICS
+--==============================================================
 
-    for _, Category in ipairs(Categories) do
+local OriginalScanEnvironment = COS.ScanEnvironment
 
-        if not self.Config.AutomaticResponses[Category] then
-            continue
-        end
+if type(OriginalScanEnvironment) == "function" then
 
-        local Patterns =
-            self.Data.AutomaticResponsePatterns[Category]
+    function COS:ScanEnvironment()
 
-        for _, Entry in ipairs(Patterns) do
+        local Result = OriginalScanEnvironment(self)
 
-            local Success, Matched = pcall(function()
+        self.Data.Statistics.TotalScans += 1
 
-                return string.find(
-                    Text,
-                    Entry.Pattern
-                )
-
-            end)
-
-            if Success and Matched then
-                return Entry.Response
-            end
-
-        end
-
+        return Result
     end
 
-    return nil
 end
 
 --==============================================================
@@ -3903,51 +3834,50 @@ end
 
 function COS:UpdateMainStatus()
 
-    if not self.UI then
+    if not self.UI or not self.UI.Main then
         return
     end
 
-    local StatusLabel =
-        self.UI.Main:FindFirstChildWhichIsA(
-            "Frame"
-        )
+    for _, Object in ipairs(
+        self.UI.Main:GetDescendants()
+    ) do
 
-    if not StatusLabel then
-        return
-    end
+        if Object:IsA("TextLabel") then
 
-    local MainStatus =
-        StatusLabel:FindFirstChildWhichIsA(
-            "TextLabel"
-        )
+            if Object.Text == "●  COS ONLINE"
+                or Object.Text == "● COS OFFLINE" then
 
-    if MainStatus then
+                Object.Text = self.State.Running
+                    and "●  COS ONLINE"
+                    or "● COS OFFLINE"
 
-        MainStatus.Text =
-            self.State.Running
-            and "● COS ONLINE"
-            or "● COS OFFLINE"
+                Object.TextColor3 = self.State.Running
+                    and self.UI.Theme.Green
+                    or self.UI.Theme.Red
 
-        MainStatus.TextColor3 =
-            self.State.Running
-            and self.UI.Theme.Green
-            or self.UI.Theme.Red
+            elseif Object.Text == "AUTÔNOMO" then
+
+                Object.Text = self.Config.General.AutonomousMode
+                    and "AUTÔNOMO"
+                    or "MANUAL"
+
+            end
+
+        end
 
     end
 
 end
 
 --==============================================================
--- UI STATISTICS
+-- STATISTICS UI
 --==============================================================
 
 local function AddStatistic(Tab, Name, Getter)
 
-    COS.UI.Section(Tab, Name)
-
     local Display = COS.UI.Info(
         Tab,
-        "Carregando..."
+        Name .. ": carregando..."
     )
 
     return function()
@@ -4017,6 +3947,14 @@ UpdateStatistics.Errors = AddStatistic(
     end
 )
 
+UpdateStatistics.Uptime = AddStatistic(
+    "Estatísticas",
+    "Tempo ativo (segundos)",
+    function()
+        return os.time() - COS.Data.Statistics.StartedAt
+    end
+)
+
 --==============================================================
 -- MEMORY UI
 --==============================================================
@@ -4031,15 +3969,59 @@ COS.UI.Info(
     "As memórias são mantidas somente durante esta sessão."
 )
 
-COS.UI.Button(
-    "Memória",
+local ClearMemoryButton = COS.UI.Button(
+    COS.UI.Pages["Memória"],
     "LIMPAR MEMÓRIA DA SESSÃO",
     UDim2.new(1,-5,0,36)
-).MouseButton1Click:Connect(function()
+)
+
+ClearMemoryButton.MouseButton1Click:Connect(function()
 
     COS:ClearSessionMemory()
 
 end)
+
+--==============================================================
+-- PERCEPTION UI
+--==============================================================
+
+COS.UI.Section(
+    "Percepção",
+    "CONTROLE DA OBSERVAÇÃO"
+)
+
+COS.UI.Toggle(
+    "Percepção",
+    "Observar jogadores",
+    COS.Config.Perception.ObservePlayers,
+    function(Value)
+
+        COS.Config.Perception.ObservePlayers = Value
+
+    end
+)
+
+COS.UI.Toggle(
+    "Percepção",
+    "Observar objetos",
+    COS.Config.Perception.ObserveObjects,
+    function(Value)
+
+        COS.Config.Perception.ObserveObjects = Value
+
+    end
+)
+
+COS.UI.Toggle(
+    "Percepção",
+    "Observar estruturas",
+    COS.Config.Perception.ObserveStructures,
+    function(Value)
+
+        COS.Config.Perception.ObserveStructures = Value
+
+    end
+)
 
 --==============================================================
 -- DEBUG UI
@@ -4060,64 +4042,27 @@ local function UpdateDebug()
     DebugStatus.Text = string.format(
         "Versão: %s\nIA: %s\nPercepção: %s\nDecisões: %s",
         COS.Version,
-        COS.State.APIAvailable and "Disponível"
+
+        COS.State.APIAvailable
+            and "Disponível"
             or "Desconectada",
-        COS.Perception.Running and "Ativa"
+
+        COS.Perception.Running
+            and "Ativa"
             or "Parada",
-        COS.Decision.Running and "Ativo"
+
+        COS.Decision.Running
+            and "Ativo"
             or "Parado"
     )
 
 end
 
 --==============================================================
--- AUTONOMOUS MODE CONTROL
---==============================================================
-
-COS.UI.Section(
-    "Geral",
-    "CONTROLE DO SISTEMA"
-)
-
-COS.UI.Toggle(
-    "Geral",
-    "Percepção automática",
-    COS.Config.Perception.Enabled,
-    function(Value)
-
-        COS.Config.Perception.Enabled = Value
-
-        if Value then
-            COS:StartPerception()
-        else
-            COS:StopPerception()
-        end
-
-    end
-)
-
-COS.UI.Toggle(
-    "Geral",
-    "Decisões automáticas",
-    COS.Config.General.AutonomousMode,
-    function(Value)
-
-        COS.Config.General.AutonomousMode = Value
-
-        if Value then
-            COS:StartDecisionLoop()
-        else
-            COS:StopDecisionLoop()
-        end
-
-    end
-)
-
---==============================================================
 -- MAIN UPDATE LOOP
 --==============================================================
 
-COS.Connections = COS.Connections or {}
+COS.State.Running = true
 
 COS:AddConnection(
     RunService.Heartbeat:Connect(function()
@@ -4136,7 +4081,6 @@ task.spawn(function()
     while COS.State.Running do
 
         COS:UpdateMainStatus()
-
         UpdateDebug()
 
         for _, UpdateFunction in pairs(
@@ -4216,3 +4160,4 @@ print("================================")
 --==============================================================
 -- FIM DA PARTE 8/8
 --==============================================================
+
